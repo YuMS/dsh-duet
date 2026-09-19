@@ -1,0 +1,60 @@
+{
+  "version": "live_tutorial_v1",
+  "format": "mono_pcm16_wav",
+  "clips": {
+    "modes_broadcast": {
+      "text": "这个喇叭按钮是播报模式。在播报模式中，我只会为您简要播报完成的任务。",
+      "seconds": 6.08,
+      "sample_rate": 48000,
+      "sha256": "e57f3110aca91813b3e2b065a2fd75251ffffb4eaf87413311ef3345353b72d3"
+    },
+    "modes_interaction": {
+      "text": "这个双向箭头按钮是交互模式。您可以让我输入、修改、发送消息，或者切换会话，也可以和我自由聊天。两个模式只能选一个，浅蓝色表示当前模式。点另一个按钮就能切换，再点当前按钮就会关闭。",
+      "seconds": 15.04,
+      "sample_rate": 48000,
+      "sha256": "fde42c335c541825558a6bbfe8bb0859ab140ec9d0a588fc6b62a3c5d25a624a"
+    },
+    "broadcast": {
+      "text": "现在我们来演示在 DSH 问一个简单的问题，看看我的播报吧。",
+      "seconds": 4.8,
+      "sample_rate": 48000,
+      "sha256": "2d762074b29729ab0c1ce8d0bd111a5c88c12f28e7665e1e5972a18f99af612d"
+    },
+    "input": {
+      "text": "现在开始演示交互模式，但是这次不需要您来说话，我会通过语音为您讲解。比如，您可以说，输入，用一句话介绍语音助手。内容就会出现在输入框里。",
+      "seconds": 12.8,
+      "sample_rate": 48000,
+      "sha256": "7bbb6d2d48cea52917b89e5740f6a0e5b272440ffeeb64b922d4c8b0d1c7f10c"
+    },
+    "edit": {
+      "text": "如果想改一改，可以接着说，把一句话改成一句简短的话。",
+      "seconds": 4.32,
+      "sample_rate": 48000,
+      "sha256": "0b7e5f5af1db9347c4ab2ffcb53b498053660faa8f186aaa4355f14ddfbd1be3"
+    },
+    "clear": {
+      "text": "想重新写，可以说，清空输入框。",
+      "seconds": 3.36,
+      "sample_rate": 48000,
+      "sha256": "801c57c112d0b6785976b18ff662fae17e3a1c8613ef52ef8063f3f74a81fe79"
+    },
+    "reinput": {
+      "text": "然后，您可以说，输入，用一句简短的话介绍语音助手。我们就重新写好了。",
+      "seconds": 6.4,
+      "sample_rate": 48000,
+      "sha256": "048260a6c0b4695282c7fa9fac4775de9d653d766a6a2c784d85b6823cd97e5b"
+    },
+    "send": {
+      "text": "满意的话，您可以说，发送，或者，提交。这次点击确认后，我帮您提交。",
+      "seconds": 5.76,
+      "sample_rate": 48000,
+      "sha256": "48204b774c6069ffbb6fe975eef238f508b6c1a9754ca4cd02e41797810ab512"
+    },
+    "switch": {
+      "text": "想看看另一个会话，可以说，切换到播报教学的会话。",
+      "seconds": 4.16,
+      "sample_rate": 48000,
+      "sha256": "f8e81d74e1e9e95831f6453e5d2155665cfa5f91cc5255fb75bd8ac165103597"
+    }
+  }
+}

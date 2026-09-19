@@ -1,0 +1,56 @@
+{
+  "name": "dsh-duet",
+  "version": "0.1.0",
+  "description": "duet: full-duplex voice interaction and task announcements for DeepSeek Harness",
+  "keywords": ["dsh-plugin", "deepseek-harness", "full-duplex", "voice"],
+  "private": true,
+  "license": "UNLICENSED",
+  "author": { "name": "YuMS", "email": "yumaoshu@gmail.com" },
+  "repository": { "type": "git", "url": "https://github.com/YuMS/dsh-duet.git" },
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "scripts": {
+    "test": "node scripts/test.mjs",
+    "check": "node scripts/check-package.mjs",
+    "test:browser": "node smoke_deepseek_harness_settings_page.mjs && node smoke_harness_tutorial.mjs && node smoke_duet_feedback.mjs",
+    "test:host": "node scripts/smoke-isolated-host.mjs",
+    "prepack": "npm run check"
+  },
+  "type": "module",
+  "main": "./deepseek_harness_duplex_control_plugin.mjs",
+  "exports": {
+    ".": {
+      "default": "./deepseek_harness_duplex_control_plugin.mjs"
+    },
+    "./client": {
+      "default": "./deepseek_harness_duplex_focus_client/lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "HEROICONS-LICENSE.txt",
+    "deepseek_harness_voice_*.mjs",
+    "tutorial-audio/*.wav",
+    "tutorial-audio/manifest.json",
+    "deepseek_harness_duplex_control.patch.yml",
+    "deepseek_harness_duplex_control_plugin.mjs",
+    "deepseek_harness_duplex_control_plugin.html",
+    "deepseek_harness_duplex_focus_client/lib/client.js"
+  ],
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "devDependencies": { "playwright": "1.58.2" },
+  "dsh": {
+    "bundle": {
+      "patch": "./deepseek_harness_duplex_control.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  }
+}

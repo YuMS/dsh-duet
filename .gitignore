@@ -1,0 +1,10 @@
+node_modules/
+*.tgz
+artifacts/
+coverage/
+test-results/
+.env
+.env.*
+!.env.example
+*.log
+.dsh/

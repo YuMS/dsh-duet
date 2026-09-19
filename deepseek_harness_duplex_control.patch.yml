@@ -1,0 +1,3 @@
+- insert:
+    - id: duplex-harness-control
+      name: 'dsh-duet'
