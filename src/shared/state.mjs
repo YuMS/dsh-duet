@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.1.1'
+export const PLUGIN_VERSION = '0.1.2'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
@@ -105,6 +105,9 @@ export class DuetState {
       return
     }
     const policyNotices = {
+      workspace_required: '请先在 DSH 中创建 workspace，再开启 duet。',
+      workspace_loading: '正在加载 workspace，请稍后再试。',
+      workspace_unavailable: '无法读取 workspace，请刷新 DSH 后重试。',
       microphone_unavailable: '无法使用所选麦克风，请在设置中检查设备与浏览器权限',
       interaction_mode_unavailable: '交互模式暂时不可用，请稍后再试',
       broadcast_mode_unavailable: '播报模式暂时不可用，请稍后再试',

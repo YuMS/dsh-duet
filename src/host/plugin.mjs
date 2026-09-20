@@ -173,7 +173,7 @@ export function apply(ctx, options = {}) {
   const feedbackStore = options.feedbackStore ?? (options.feedbackDisabled ? null : new RemoteFeedback(()=>settings.effective(),{keyPath:options.feedbackIdentityPath}))
   const feedback = new FeedbackService(feedbackStore)
   let duetProxy
-  ctx.effect(() => { duetProxy = registerDuetProxy(ctx, voice, feedback); return duetProxy })
+  ctx.effect(() => { duetProxy = registerDuetProxy(ctx, voice, feedback, () => (ctx.workspaceRegistry.list?.() || []).length > 0); return duetProxy })
 
   ctx.effect(() => () => { hostAbort.abort() })
 

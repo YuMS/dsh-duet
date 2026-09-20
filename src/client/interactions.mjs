@@ -1,7 +1,9 @@
 /** Use the same pending objects as DSH's clickable question/approval cards. */
 export function nativeInteractions(ctx) {
   const firstSeen = new WeakMap()
-  const pending = () => [...ctx.uiSession.pendingInteractions.getSnapshot().values()]
+  const pending = () => ctx.uiSession.sessionStatus
+    ? [...ctx.uiSession.sessionStatus.getSnapshot().values()].map(row => row.pendingInteraction).filter(Boolean)
+    : [...ctx.uiSession.pendingInteractions.getSnapshot().values()]
   const publicValue = value => {
     if (!firstSeen.has(value)) firstSeen.set(value, Date.now() / 1000)
     return { id: value.key, session_id: value.sessionId, created_at: firstSeen.get(value),

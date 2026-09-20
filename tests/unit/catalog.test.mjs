@@ -25,14 +25,14 @@ test('hidden blank remains addressable for native focus synchronization',()=>{
 })
 test('flat manual order reconciles stale and duplicated ids; grouped orders stay within their workspace',()=>{
   const rows=buildSessionCatalog(items,options)
-  assert.deepEqual(ids(orderSessionCatalog(rows,{groupBy:'flat',sessionOrderByAccount:{__flat_session_order__:['hahas','archived','hahas','loose']}})),['hahas','loose','newer'])
+  assert.deepEqual(ids(orderSessionCatalog(rows,{groupBy:'flat',orderBy:'manual',sessionOrderByAccount:{__flat_session_order__:['hahas','archived','hahas','loose']}})),['hahas','loose','newer'])
   assert.deepEqual(ids(orderSessionCatalog(rows,{groupBy:'workspace',sessionOrderByAccount:{'first-workspace':['newer','hahas']}})),['hahas','newer','loose'])
   assert.deepEqual(ids(orderSessionCatalog(rows,{groupBy:'flat'})),['newer','hahas','loose'])
 })
 test('RPC startup catalog and subsequent ordinal resolution use the same live browser order',async()=>{
   const old=Object.getOwnPropertyDescriptor(globalThis,'localStorage')
   let order=['hahas','newer','loose'];const sent=[]
-  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem(key){assert.equal(key,WORKSPACE_VIEW_KEY);return JSON.stringify({groupBy:'flat',sessionOrderByAccount:{__flat_session_order__:order}})}}})
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem(key){assert.equal(key,WORKSPACE_VIEW_KEY);return JSON.stringify({groupBy:'flat',orderBy:'manual',sessionOrderByAccount:{__flat_session_order__:order}})}}})
   try {
     const rows=buildSessionCatalog(items,options)
     const executor=new HarnessRPCExecutor(x=>sent.push(x),async()=>({status:200,text:async()=>JSON.stringify({sessions:rows})}))

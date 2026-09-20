@@ -109,7 +109,7 @@ test('voice settings API requires DSH auth and same-origin write, persists witho
   const saved = await h.request('PUT', '/duplex-control/api/voice/config', input, { origin: 'http://localhost:3080', host: 'localhost:3080', 'x-duplex-settings': '1', 'content-type': 'application/json' })
   assert.equal(saved.status, 200)
   assert.equal(saved.body.backend_url, input.backend_url)
-  assert.equal(saved.body.auth_configured, true)
+  assert.equal(saved.body.auth_configured, false)
   assert.ok(!JSON.stringify(saved.body).includes('secret-token'))
   const reload = makeHarness({ options: { ...options, debug: true } })
   const read = await reload.request('GET', '/duplex-control/api/voice/config')

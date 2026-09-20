@@ -20,12 +20,13 @@ export function validateRPC(request) {
 }
 
 export class HarnessRPCExecutor {
-  constructor(send, fetchImpl = fetch, diagnostic = () => {}, localComposer = null) {
+  constructor(send, fetchImpl = fetch, diagnostic = () => {}, localComposer = null, catalogOrder = rows => orderSessionCatalog(rows, readWorkspaceView())) {
     // Native Window.fetch rejects an RPCExecutor receiver (Illegal invocation).
     // Call the captured function plainly, not as an instance method.
     this.send = send; this.fetch = (...args) => fetchImpl(...args); this.closed = false
     this.diagnostic = diagnostic
     this.localComposer = localComposer
+    this.catalogOrder = catalogOrder
     this.connectionId = null; this.seen = new Map(); this.retired = new Set(); this.controllers = new Set()
   }
 
@@ -84,7 +85,7 @@ export class HarnessRPCExecutor {
       if (response.status === 200 && request.path === '/api/sessions' && Array.isArray(body.sessions)) {
         // Both startup prompt and nth_N resolution read this same browser-local
         // order, including manual drag order; archived rows cannot consume ranks.
-        body.sessions = orderSessionCatalog(body.sessions, readWorkspaceView())
+        body.sessions = this.catalogOrder(body.sessions)
       }
       return { ...envelope, status: response.status, body }
     } catch (error) {

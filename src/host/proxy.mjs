@@ -2,8 +2,9 @@
 import { createRequire } from 'node:module'
 import { DuetTrace } from './trace.mjs'
 import { duetEnv } from './environment.mjs'
+import { DEFAULT_DUET_URL, publicServiceAuthorization } from './service-defaults.mjs'
+export { DEFAULT_DUET_URL } from './service-defaults.mjs'
 const require = createRequire(import.meta.url)
-export const DEFAULT_DUET_URL = 'ws://duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com/ws?protocol=realtime_v2'
 
 export function compatibleVersion(version, min = '0.1.0', maxExclusive = '0.2.0') {
   const parse = v => /^\d+\.\d+\.\d+$/.test(v || '') ? v.split('.').map(Number) : null
@@ -13,15 +14,16 @@ export function compatibleVersion(version, min = '0.1.0', maxExclusive = '0.2.0'
 }
 
 export function duetConfig(env = process.env) {
+  const endpoints = {
+    online: duetEnv('ONLINE_URL', env) || duetEnv('URL', env) || DEFAULT_DUET_URL,
+    tts_only: duetEnv('TTS_ONLY_URL', env) || duetEnv('URL', env) || DEFAULT_DUET_URL,
+  }
   return {
     min_version: duetEnv('MIN_VERSION', env) || '0.1.0',
     max_version_exclusive: duetEnv('MAX_VERSION_EXCLUSIVE', env) || '0.2.0',
     control_transport: duetEnv('CONTROL_TRANSPORT', env) || 'client_rpc_v1',
-    authorization: duetEnv('AUTHORIZATION', env) || '',
-    endpoints: {
-      online: duetEnv('ONLINE_URL', env) || duetEnv('URL', env) || DEFAULT_DUET_URL,
-      tts_only: duetEnv('TTS_ONLY_URL', env) || duetEnv('URL', env) || DEFAULT_DUET_URL,
-    },
+    authorization: publicServiceAuthorization(endpoints),
+    endpoints,
   }
 }
 
@@ -42,7 +44,7 @@ export function externalWithState(message, _state) {
     ...(source === undefined ? {} : { source: { ...source } }) }
 }
 
-export function registerDuetProxy(ctx, config = duetConfig(), feedback = null) {
+export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, canUseVoice = () => true) {
   if (!['http', 'client_rpc_v1'].includes(config.control_transport || 'http')) throw new Error('invalid_harness_transport')
   if (!compatibleVersion(config.min_version, config.min_version, config.max_version_exclusive)) throw new Error('invalid_plugin_version_policy')
   for (const target of Object.values(config.endpoints)) {
@@ -92,6 +94,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null) {
         const mode = params.get('mode')
         if (!compatibleVersion(params.get('plugin_version'), config.min_version, config.max_version_exclusive)) { fail('plugin_upgrade_required'); return }
         if (!['online', 'tts_only'].includes(mode)) { fail('invalid_voice_mode'); return }
+        if (!canUseVoice()) { fail('workspace_required'); return }
         connections.set(front, { mode, ready: false, trace })
         front.on('close', () => connections.delete(front))
         const target = config.endpoints[mode]

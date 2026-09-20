@@ -6,6 +6,8 @@ const modules = {
   interactions: 'client/interactions', tutorial: 'client/tutorial',
   tutorial_adapter: 'client/tutorial-adapter', tutorial_request: 'client/tutorial-request',
   feedback: 'client/feedback', consent: 'client/consent',
+  connection_hint: 'client/connection-hint',
+  workspaces: 'client/workspaces',
 }
 const aliases = {
   state: 'DuetState as VoiceState', audio: 'DuetAudio as VoiceAudio',

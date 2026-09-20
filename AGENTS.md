@@ -9,4 +9,4 @@
 - 版本更新同步 package.json、PLUGIN_VERSION 与浏览器 URL 版本，check 会验证一致。
 - 协议与用户数据键变更必须验证兼容性。
 - 用户未授权部署时，只测试/打包，不重启 DSH 或更新线上服务。
-- 不提交语音日志、Token、.env、用户反馈或安装目录。不要擅自修改发布许可或 npm publish。
+- 不提交语音日志、私有 Token、.env、用户反馈或安装目录。用户明确授权随包分发的公开试用凭证集中放在 src/host/service-defaults.mjs。不要擅自修改发布许可或 npm publish。

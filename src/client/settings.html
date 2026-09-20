@@ -85,8 +85,6 @@
     <details id="advancedConnection"><summary>连接配置</summary>
     <label for="backendUrl">服务地址</label>
     <input id="backendUrl" type="url" placeholder="wss://服务地址/ws?protocol=realtime_v2" autocomplete="off">
-    <label for="authToken">访问密钥</label>
-    <input id="authToken" type="password" placeholder="请输入访问密钥" autocomplete="new-password" spellcheck="false">
     <div class="row"><button id="saveDuet" disabled>保存连接配置</button></div>
     <div id="settingsMessage" role="status" style="margin-top:10px"></div>
     </details>
@@ -304,8 +302,6 @@
     if (fill) {
       settingsRevision = config.revision;
       $('backendUrl').value = config.backend_url || '';
-      $('authToken').value = '';
-      $('authToken').placeholder = config.token_placeholder;
     }
     const c = config.connection || {};
     $('duetMark').style.color = c.online || c.tts_only ? '#7fd6a6' : '#ed9b35';
@@ -337,7 +333,7 @@
   $('saveDuet').onclick = async () => {
     $('saveDuet').disabled = true;
     try {
-      await api('/voice/config', {method:'PUT', headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'}, body:JSON.stringify({backend_url:$('backendUrl').value.trim(), auth_token:$('authToken').value, revision:settingsRevision})});
+      await api('/voice/config', {method:'PUT', headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'}, body:JSON.stringify({backend_url:$('backendUrl').value.trim(), revision:settingsRevision})});
       $('settingsMessage').textContent = '配置已保存；如需语音，请在 DSH 主页面重新打开。';
       await loadDuetConfig(true);
     } catch (error) { $('settingsMessage').textContent = debugEnabled ? `保存失败：${error.message}` : '保存失败，请稍后重试。'; }
@@ -370,7 +366,7 @@
   }
   $('openTutorial').onclick = async () => {
     try {
-      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.1.1');
+      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.1.2');
       requestTutorial(localStorage);
       $('tutorialStatus').textContent = '请回到 DSH 页面继续教学。';
     } catch { $('tutorialStatus').textContent = '暂时无法打开教学，请允许浏览器存储后重试。'; }
@@ -379,11 +375,11 @@
   setInterval(() => { loadDuetConfig().catch(() => { $('duetConnection').textContent = '语音连接信息不可用'; }); }, 2000);
   void loadNotices();
   setInterval(loadNotices, 60000);
-  import('/duet/assets/client/shortcuts.mjs?v=0.1.1').then(({mountShortcutSettings}) => {
+  import('/duet/assets/client/shortcuts.mjs?v=0.1.2').then(({mountShortcutSettings}) => {
     const dispose = mountShortcutSettings({speaker:$('speakerShortcut'),mic:$('micShortcut'),clearSpeaker:$('clearSpeakerShortcut'),clearMic:$('clearMicShortcut'),status:$('shortcutStatus')});
     window.addEventListener('pagehide', e => {if(!e.persisted)dispose()}, {once:true});
   }).catch(() => { $('shortcutStatus').textContent = '暂时无法加载快捷键设置，请刷新重试。'; });
-  import('/duet/assets/client/microphone.mjs?v=0.1.1').then(({mountMicrophoneSettings}) => {
+  import('/duet/assets/client/microphone.mjs?v=0.1.2').then(({mountMicrophoneSettings}) => {
     const dispose = mountMicrophoneSettings({select:$('microphoneDevice'),refresh:$('refreshMicrophones'),status:$('microphoneStatus')});
     window.addEventListener('pagehide', dispose, {once:true});
   }).catch(() => { $('microphoneStatus').textContent = '暂时无法加载麦克风设置，请刷新重试。'; });

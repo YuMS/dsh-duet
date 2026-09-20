@@ -1,13 +1,15 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.1'
-import { DuetAudio } from './audio.mjs?v=0.1.1'
-import { HarnessRPCExecutor } from './rpc.mjs?v=0.1.1'
-import { composerAccess, observeComposer, focusedSession } from './composer.mjs?v=0.1.1'
-import { mountTutorial } from './tutorial.mjs?v=0.1.1'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.1'
-import { mountRating } from './feedback.mjs?v=0.1.1'
-import { createAudioUploadConsent } from './consent.mjs?v=0.1.1'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.1'
-import { nativeInteractions } from './interactions.mjs?v=0.1.1'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.2'
+import { DuetAudio } from './audio.mjs?v=0.1.2'
+import { HarnessRPCExecutor } from './rpc.mjs?v=0.1.2'
+import { composerAccess, observeComposer, focusedSession } from './composer.mjs?v=0.1.2'
+import { mountTutorial } from './tutorial.mjs?v=0.1.2'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.2'
+import { mountRating } from './feedback.mjs?v=0.1.2'
+import { createAudioUploadConsent } from './consent.mjs?v=0.1.2'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.2'
+import { nativeInteractions } from './interactions.mjs?v=0.1.2'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.1.2'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog } from './workspaces.mjs?v=0.1.2'
 
 export function mountDuet(ctx) {
   const audio = new DuetAudio()
@@ -15,7 +17,7 @@ export function mountDuet(ctx) {
   let disposed = false, controls, toastTimer, pollRunning = false, cursor = null, resultEpoch = null
   const labels = new Map()
   let clientTraceId = null, diagnosticCount = 0
-  let tutorial, teaching, ratingPanel
+  let tutorial, teaching, ratingPanel, connectionHint
   const diagnostic = data => {
     if (++diagnosticCount > 100) return
     const bounded = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 4000) : v]))
@@ -29,6 +31,7 @@ export function mountDuet(ctx) {
   window.addEventListener('error', pageError)
   window.addEventListener('unhandledrejection', pageError)
   const notice = (text, { upgrade = false } = {}) => {
+    connectionHint?.dismiss()
     if (upgrade) { ratingPanel?.dispose(); ratingPanel = null }
     const toast = controls?.querySelector('[role=status]')
     if (!toast) return
@@ -74,8 +77,10 @@ export function mountDuet(ctx) {
     const mark = controls.querySelector('[data-duet-mark]')
     mark.style.color = state.ready ? '#7fd6a6' : '#ed9b35'
     mark.title = state.ready ? '语音已连接' : '语音未连接'
+    connectionHint?.update({ mode: state.mode, ready: state.ready, teaching: Boolean(tutorial?.active) })
   }
   const connect = (mode, receive) => {
+    requireWorkspace(ctx)
     if (!audioConsent.granted()) throw Error('data_upload_consent_required')
     clientTraceId = crypto.randomUUID(); diagnosticCount = 0
     const connectionTraceId = clientTraceId
@@ -89,7 +94,7 @@ export function mountDuet(ctx) {
     const composer = composerAccess(ctx, id => labels.get(id) || id)
     const interactions = nativeInteractions(ctx)
     const rpc = new HarnessRPCExecutor(send, fetch, report, async (request, signal) =>
-      (await interactions(request, signal)) ?? composer.execute(request, signal))
+      (await interactions(request, signal)) ?? composer.execute(request, signal), rows => browserSessionCatalog(ctx, rows))
     const connection = {
       feedbackTicket: null,
       send,
@@ -116,6 +121,7 @@ export function mountDuet(ctx) {
       // Establish/renew the host-signed anonymous cookie before the WS handshake.
       const identity=await fetch('/duplex-control/api/voice/config',{credentials:'same-origin',cache:'no-store'})
       if(!identity.ok)throw Error('voice_config_unavailable')
+      requireWorkspace(ctx)
       if(closed)return
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
       ws = new WebSocket(`${protocol}//${location.host}/duplex-control/voice/ws?mode=${mode}&plugin_version=${PLUGIN_VERSION}&client_trace_id=${connectionTraceId}`)
@@ -223,8 +229,17 @@ export function mountDuet(ctx) {
       button.append(ring)
       button.onclick = () => {
         if (tutorial?.active) { notice('请先结束教学，再切换模式。'); return }
+        const requestedMode = kind === 'mic' ? 'online' : 'tts_only'
+        const checkWorkspace = () => {
+          if (state.mode === requestedMode) return true // Closing is always allowed.
+          const issue = workspaceIssue(ctx)
+          if (issue) { state.fail(issue); return false }
+          return true
+        }
+        if (!checkWorkspace()) return
         const activate = () => {
           if (disposed || tutorial?.active) return
+          if (!checkWorkspace()) return
           // Unlock playback inside user activation, before any network await.
           const enabling = kind === 'mic' ? state.mode !== 'online' : state.mode !== 'tts_only'
           if (enabling) void audio.prepare().catch(() => state.fail('audio_permission_denied'))
@@ -257,6 +272,8 @@ export function mountDuet(ctx) {
     toast.hidden = true
     toast.style.cssText = 'position:absolute;bottom:100%;left:0;z-index:9999;min-width:180px;max-width:280px;background:#252c38;color:white;padding:10px;border-radius:8px;font-size:12px;box-shadow:0 3px 18px #0005'
     controls.append(toast)
+    connectionHint?.dispose()
+    connectionHint = mountConnectionHint(controls)
     draw(state)
   }
   mount()
@@ -276,6 +293,9 @@ export function mountDuet(ctx) {
     try {
       const [catalog, completed, health] = await Promise.all([api('sessions'), api(`results?after=${cursor ?? 0}&limit=100`), api('health')])
       if (disposed) return
+      catalog.sessions = browserSessionCatalog(ctx, catalog.sessions)
+      const issue = workspaceIssue(ctx)
+      if (issue === 'workspace_required' && state.mode !== 'off') state.fail(issue)
       for (const s of catalog.sessions) labels.set(s.session_id, s.label)
       const bootstrap = cursor === null || resultEpoch !== health.focus_epoch
       resultEpoch = health.focus_epoch
@@ -333,6 +353,7 @@ export function mountDuet(ctx) {
     tutorial?.dispose()
     audioConsent.cancel()
     ratingPanel?.dispose()
+    connectionHint?.dispose()
     clearInterval(timer); clearInterval(progress); clearTimeout(toastTimer)
     document.removeEventListener('visibilitychange', visibility)
     window.removeEventListener('error', pageError)

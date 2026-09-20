@@ -9,7 +9,9 @@ import { FeedbackService } from '../../src/host/feedback-store.mjs'
 test('both modes default to the public trial address and retain explicit overrides', () => {
   assert.equal(new URL(DEFAULT_DUET_URL).hostname, 'duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com')
   assert.deepEqual(duetConfig({}).endpoints, { online: DEFAULT_DUET_URL, tts_only: DEFAULT_DUET_URL })
-  assert.equal(duetConfig({}).authorization, '')
+  assert.ok(duetConfig({}).authorization)
+  assert.equal(duetConfig({ DUET_AUTHORIZATION: 'ignored', DUPLEX_VOICE_AUTHORIZATION: 'also-ignored' }).authorization, duetConfig({}).authorization)
+  assert.equal(duetConfig({ DUET_URL: 'ws://localhost/shared', DUET_AUTHORIZATION: 'ignored' }).authorization, '')
   assert.deepEqual(duetConfig({ DUPLEX_VOICE_URL: 'ws://localhost/shared', DUPLEX_VOICE_ONLINE_URL: 'ws://localhost/online' }).endpoints,
     { online: 'ws://localhost/online', tts_only: 'ws://localhost/shared' })
 })
@@ -34,7 +36,7 @@ async function fixture(t, rejectStatus, overrides = {}) {
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening')
   const host = http.createServer()
   const url = `ws://127.0.0.1:${upstream.address().port}`
-  const stop = registerDuetProxy({ webServer: { registerUpgrade({ handler }) { host.on('upgrade', handler); return () => host.off('upgrade', handler) } } }, { ...duetConfig(), ...overrides, endpoints: { online: url, tts_only: url } }, overrides.feedback)
+  const stop = registerDuetProxy({ webServer: { registerUpgrade({ handler }) { host.on('upgrade', handler); return () => host.off('upgrade', handler) } } }, { ...duetConfig(), authorization: '', ...overrides, endpoints: { online: url, tts_only: url } }, overrides.feedback, overrides.canUseVoice)
   host.listen(0, '127.0.0.1'); await once(host, 'listening')
   t.after(async () => {
     stop()
@@ -48,6 +50,20 @@ async function fixture(t, rejectStatus, overrides = {}) {
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+test('no workspace blocks both modes before any upstream connection', async t => {
+  let available = false
+  const f = await fixture(t, null, { canUseVoice: () => available })
+  for (const mode of ['online', 'tts_only']) {
+    const ws = f.connect(mode)
+    assert.equal((await next(ws)).error.code, 'workspace_required')
+    await once(ws, 'close')
+  }
+  assert.equal(f.connections.length, 0)
+  available = true
+  const ws = await begin(f, 'tts_only')
+  assert.equal(f.connections.length, 1)
+  ws.close(); await once(ws, 'close')
+})
 test('session rating ticket is minted from upstream identity and marked closed by proxy',async t=>{
   const feedback=new FeedbackService({userId:()=> 'alice',insert:async()=>{}})
   const f=await fixture(t,null,{feedback}),ws=f.connect()

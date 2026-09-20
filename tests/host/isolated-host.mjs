@@ -136,6 +136,19 @@ try {
   assert.equal(legacySettings.headers().location,'/duet/')
   assert.equal((await context.request.get(`http://127.0.0.1:${port}/duet/`)).status(),200)
   mark('canonical_duet_page_legacy_redirect')
+  await page.waitForFunction(() => globalThis.__duetCtx.workspaces.list.getSnapshot().phase === 'ready')
+  assert.equal(await page.evaluate(() => globalThis.__duetCtx.workspaces.list.getSnapshot().items.length), 0)
+  for (const kind of ['mic', 'speaker']) {
+    await page.locator(`[data-voice="${kind}"]`).click()
+    await page.getByText('请先在 DSH 中创建 workspace，再开启 duet。', { exact: true }).waitFor()
+    assert.equal(await page.getByRole('dialog', { name: '开启 duet', exact: true }).count(), 0)
+    assert.equal(await page.evaluate(() => globalThis.__duetState.mode), 'off')
+  }
+  assert.equal(sessions.length, 0)
+  assert.equal(await page.evaluate(() => globalThis.__micRequests), 0)
+  mark('no_workspace_blocks_both_modes_before_consent_and_microphone')
+  await page.evaluate(path => globalThis.__duetCtx.workspaces.create({ path }), home)
+  await page.waitForFunction(() => globalThis.__duetCtx.workspaces.list.getSnapshot().items.length > 0)
   assert.equal(await page.locator('[data-duet-mark]').evaluate(e=>e.style.color),'rgb(237, 155, 53)')
   await page.evaluate(() => localStorage.setItem('dsh-duet.audio-upload-consent.v1', 'accepted'))
   await page.locator('[data-voice="mic"]').click()
@@ -291,7 +304,7 @@ try {
   mark('reload_single_toolbar', 'busy_returns_off')
   rejectBusy = false; rejectUpgrade = true
   await page.locator('[data-voice="mic"]').click()
-  const notice = page.locator('#dsh-duet-controls [role="status"]')
+  const notice = page.locator('#dsh-duet-controls [role="status"]:visible')
   await notice.getByText('如何升级', { exact: true }).waitFor()
   assert.ok((await notice.innerText()).includes('0.9.99'))
   assert.ok((await notice.innerText()).includes(PLUGIN_VERSION))

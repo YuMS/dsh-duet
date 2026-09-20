@@ -1,4 +1,4 @@
-import { microphoneConstraints } from './microphone.mjs?v=0.1.1'
+import { microphoneConstraints } from './microphone.mjs?v=0.1.2'
 
 /** Browser-owned microphone and PCM playback. No microphone is requested in tts_only. */
 export class DuetAudio {

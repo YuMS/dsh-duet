@@ -19,10 +19,21 @@ function reconcile(rows, ids) {
 export function orderSessionCatalog(rows, view = {}) {
   const visible = rows.filter(row => !row.archived && row.origin !== 'subagent' && (!row.blank || row.active))
   const accounts = view?.sessionOrderByAccount || {}
+  // 0.1.5 persists the effective activity-promoted order; 0.1.6 derives recency
+  // live and keeps stored orders only for manual mode (same v5 storage key).
+  const legacy = Object.hasOwn(view, 'sessionUpdatedAtByAccount')
+  const recent = members => [...members].sort((a,b) => (b.updated_at || 0) - (a.updated_at || 0)
+    || (String(a.session_id) < String(b.session_id) ? -1 : 1))
+  const ordered = (members, key) => {
+    const stored = accounts[key]
+    const updated = (view.orderBy || 'updated') === 'updated'
+    const result = updated && (!legacy || !Array.isArray(stored))
+      ? recent(members) : reconcile(members, stored)
+    if (legacy) return result
+    return [...result.filter(row => row.blank && row.active), ...result.filter(row => !row.blank || !row.active)]
+  }
   if (view?.groupBy === 'flat') {
-    const recent = [...visible].sort((a,b) => (b.updated_at || 0) - (a.updated_at || 0)
-      || String(a.session_id).localeCompare(String(b.session_id)))
-    return reconcile(recent, accounts.__flat_session_order__)
+    return ordered(visible, '__flat_session_order__')
   }
   const groups = new Map()
   for (const row of visible) {
@@ -30,7 +41,7 @@ export function orderSessionCatalog(rows, view = {}) {
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key).push(row)
   }
-  return [...groups].flatMap(([key, members]) => reconcile(members, accounts[key]))
+  return [...groups].flatMap(([key, members]) => ordered(members, key))
 }
 
 export function buildSessionCatalog(items, {workspaces = [], archivedIds = [], activeId, includeBlank = false} = {}) {

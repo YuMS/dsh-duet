@@ -5,7 +5,7 @@ window.__ModuleLoader__.load({
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" })
 
-    const inject = ["sessions", "conversation", "uiSession"]
+    const inject = ["sessions", "conversation", "uiSession", "workspaces"]
 
     function apply(ctx) {
       const focusedSession = () => {
@@ -31,7 +31,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => {
         let active = true
         let dispose
-        import('/duet/assets/client/browser.mjs?v=0.1.1').then(module => {
+        import('/duet/assets/client/browser.mjs?v=0.1.2').then(module => {
           if (active) dispose = module.mountDuet(ctx)
         }).catch(error => console.warn('duet controls could not load:', error))
         return () => { active = false; dispose?.() }

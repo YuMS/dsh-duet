@@ -35,7 +35,7 @@ try {
         if (req.method() === 'PUT') {
           assert.equal(req.headers()['x-duplex-settings'], '1')
           const input = req.postDataJSON()
-          assert.equal(input.auth_token, '')
+          assert.equal(Object.hasOwn(input, 'auth_token'), false)
           config.backend_url = input.backend_url; config.revision++
         }
         json = config
@@ -49,7 +49,7 @@ try {
     await page.goto('http://localhost:19200/duet/')
     await page.waitForFunction(() => !document.getElementById('saveDuet').disabled)
     assert.equal(await page.locator('#debugTools').isVisible(), debug)
-    assert.equal(await page.locator('#authToken').inputValue(), '')
+    assert.equal(await page.locator('#authToken').count(), 0)
     assert.equal(await page.locator('#advancedConnection').isVisible(), true)
     assert.equal(await page.locator('#authState').textContent(), '已配置')
     assert.equal(await page.locator('#duplexModel').textContent(), 'duet-duplex-v0.1')
@@ -113,7 +113,7 @@ try {
       assert.equal(config.backend_url, 'wss://voice.example.test/ws?protocol=realtime_v2')
     }
     assert.deepEqual(errors, [])
-    console.log(`debug=${debug}: visibility, polling, URL save, token placeholder, plain-text announcements passed`)
+    console.log(`debug=${debug}: visibility, polling, URL-only save, no token input, plain-text announcements passed`)
     await page.close()
   }
 } finally { await browser.close() }
