@@ -1,48 +1,59 @@
 {
   "name": "dsh-duet",
-  "version": "0.1.0",
-  "description": "duet: full-duplex voice interaction and task announcements for DeepSeek Harness",
-  "keywords": ["dsh-plugin", "deepseek-harness", "full-duplex", "voice"],
-  "private": true,
-  "license": "UNLICENSED",
-  "author": { "name": "YuMS", "email": "yumaoshu@gmail.com" },
-  "repository": { "type": "git", "url": "https://github.com/YuMS/dsh-duet.git" },
-  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "version": "0.1.1",
+  "description": "duet（二重奏）：只用语音就能操作 DSH，边听边说、随时插话的全双工语音助手。",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "full-duplex",
+    "voice"
+  ],
+  "license": "Apache-2.0",
+  "author": {
+    "name": "YuMS"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YuMS/dsh-duet.git"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
   "scripts": {
     "test": "node scripts/test.mjs",
     "check": "node scripts/check-package.mjs",
-    "test:browser": "node smoke_deepseek_harness_settings_page.mjs && node smoke_harness_tutorial.mjs && node smoke_duet_feedback.mjs",
-    "test:host": "node scripts/smoke-isolated-host.mjs",
+    "test:browser": "node tests/browser/settings.mjs && node tests/browser/tutorial.mjs && node tests/browser/feedback.mjs",
+    "test:host": "node tests/host/isolated-host.mjs",
     "prepack": "npm run check"
   },
   "type": "module",
-  "main": "./deepseek_harness_duplex_control_plugin.mjs",
+  "main": "./src/host/plugin.mjs",
   "exports": {
     ".": {
-      "default": "./deepseek_harness_duplex_control_plugin.mjs"
+      "default": "./src/host/plugin.mjs"
     },
     "./client": {
-      "default": "./deepseek_harness_duplex_focus_client/lib/client.js"
+      "default": "./src/client/entry.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
+    "LICENSE",
+    "NOTICE",
     "HEROICONS-LICENSE.txt",
-    "deepseek_harness_voice_*.mjs",
-    "tutorial-audio/*.wav",
-    "tutorial-audio/manifest.json",
-    "deepseek_harness_duplex_control.patch.yml",
-    "deepseek_harness_duplex_control_plugin.mjs",
-    "deepseek_harness_duplex_control_plugin.html",
-    "deepseek_harness_duplex_focus_client/lib/client.js"
+    "src/",
+    "config/",
+    "assets/tutorial-audio/"
   ],
   "dependencies": {
     "ws": "^8.18.3"
   },
-  "devDependencies": { "playwright": "1.58.2" },
+  "devDependencies": {
+    "playwright": "1.58.2"
+  },
   "dsh": {
     "bundle": {
-      "patch": "./deepseek_harness_duplex_control.patch.yml"
+      "patch": "./config/duet.patch.yml"
     },
     "client": {
       "inject": [

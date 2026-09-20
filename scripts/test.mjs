@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process'
 const root = new URL('../', import.meta.url)
 const home = mkdtempSync(join(tmpdir(), 'dsh-duet-test-'))
 try {
-  const files = readdirSync(root).filter(f => /^test_.*\.mjs$/.test(f)).sort()
+  const files = readdirSync(new URL('tests/unit/', root)).filter(f => f.endsWith('.test.mjs')).sort().map(f => `tests/unit/${f}`)
   const result = spawnSync(process.execPath, ['--test', ...files], {
     cwd: root, stdio: 'inherit',
     env: { ...process.env, DSH_HOME: home, DUPLEX_VOICE_TRACE_DIR: join(home, 'traces') },
