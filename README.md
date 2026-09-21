@@ -2,7 +2,7 @@
 
 **DSH 语音操控和语音播报**
 
-[![duet 演示视频（点击播放）](https://raw.githubusercontent.com/YuMS/dsh-duet/main/docs/media/duet-demo.jpg)](https://github.com/YuMS/dsh-duet/raw/refs/heads/main/docs/media/duet-demo.mp4)
+https://github.com/user-attachments/assets/83152138-c292-4057-a820-efc2bc96f33a
 
 duet，意为「二重奏」。这里的 duet 使用全双工语音模型，可以边听边说，
 让你与 DSH 的交流不必一人一句地等待。
