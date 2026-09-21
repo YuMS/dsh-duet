@@ -1,7 +1,7 @@
 /** DSH browser services plus existing voice connection; never opens a microphone. */
-import { PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.2'
-import { focusedSession } from './composer.mjs?v=0.1.2'
-import { requireWorkspace } from './workspaces.mjs?v=0.1.2'
+import { PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.3'
+import { focusedSession } from './composer.mjs?v=0.1.3'
+import { requireWorkspace, workspaceIssue } from './workspaces.mjs?v=0.1.3'
 export function tutorialAdapter(ctx, state, audio, pollReady) {
   let narration
   const completed = new Map()
@@ -38,6 +38,7 @@ export function tutorialAdapter(ctx, state, audio, pollReady) {
     return s
   }
   return {
+    workspaceIssue:()=>workspaceIssue(ctx),
     mode:()=>state.mode,current,
     observe(event){if(event.type==='external_message.done'){completed.set(event.message_id,event.status);if(completed.size>128)completed.delete(completed.keys().next().value)}},
     unlock:()=>audio.prepare(),

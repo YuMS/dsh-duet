@@ -7,6 +7,8 @@ const modules = {
   tutorial_adapter: 'client/tutorial-adapter', tutorial_request: 'client/tutorial-request',
   feedback: 'client/feedback', consent: 'client/consent',
   connection_hint: 'client/connection-hint',
+  controls_layout: 'client/controls-layout',
+  notice: 'client/notice',
   workspaces: 'client/workspaces',
 }
 const aliases = {

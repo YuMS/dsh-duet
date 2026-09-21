@@ -37,3 +37,9 @@ test('aborted write never touches the editor',async()=>{
   const f=fixture(),c=new AbortController();c.abort()
   await assert.rejects(f.a.write('tutorial','bad','',c.signal),{name:'AbortError'});assert.equal(f.calls.length,0)
 })
+test('tutorial exposes missing workspace and rejects creation before API calls',async()=>{
+  const ctx={workspaces:{list:{getSnapshot:()=>({phase:'ready',items:[]})}}}
+  const adapter=tutorialAdapter(ctx,{}, {},()=>{})
+  assert.equal(adapter.workspaceIssue(),'workspace_required')
+  await assert.rejects(adapter.create('tutorial',new AbortController().signal),/workspace_required/)
+})

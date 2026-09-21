@@ -1,5 +1,5 @@
 /** Opt-in walkthrough. All writes are limited to sessions created by this run. */
-import {consumeTutorialRequest} from './tutorial-request.mjs?v=0.1.2'
+import {consumeTutorialRequest} from './tutorial-request.mjs?v=0.1.3'
 export const TUTORIAL_KEY = 'dsh-duplex-tutorial-v1'
 export const QUESTION = '什么是语音交互？请用一句话简单解释，不使用工具。'
 export const INPUT = '用一句话介绍语音助手。'
@@ -177,7 +177,18 @@ export function mountTutorial({ controls, adapter }) {
     const owner=run
     await owner?.stop();if(run!==owner)return
     active=false;lockRelease?.();lockRelease=null
+    if (showWorkspaceIssue(error.message)) return
     show('教学已暂停', `${error.message}\n不会继续发送或修改。已经提交的任务仍会保留。`, [['重新开始',welcome]])
+  }
+  const showWorkspaceIssue = issue => {
+    const messages = {
+      workspace_required: ['请先创建 workspace', '请先在 DSH 中创建一个 workspace，再回来开始教学。'],
+      workspace_loading: ['正在加载 workspace', '请稍等片刻，再试一次。'],
+      workspace_unavailable: ['暂时无法读取 workspace', '请检查 DSH 的 workspace 是否正常加载，再试一次。'],
+    }
+    if (!messages[issue]) return false
+    show(...messages[issue], [['重新检查', welcome]])
+    return true
   }
   const act = async (title,text,fn,next,selector,pause=0) => {
     if(run?.busy)return
@@ -216,6 +227,7 @@ export function mountTutorial({ controls, adapter }) {
     if(active)return
     if(!consent?.sound||!consent?.chat){welcome();return}
     closed=false
+    if(showWorkspaceIssue(adapter.workspaceIssue?.()))return
     if(adapter.mode()!=='off'){show('先结束当前语音','请先关闭语音模式，再开始教学。',[['重新检查',welcome]]);return}
     if(!navigator.locks){show('当前浏览器暂不支持教学','请使用新版 Chrome 或 Edge 打开 DSH。');return}
     try {
@@ -233,11 +245,13 @@ export function mountTutorial({ controls, adapter }) {
   }
   const welcome = () => {
     closed=false
+    if(showWorkspaceIssue(adapter.workspaceIssue?.()))return
     const view=show('来试试用声音操作吧','我会带您体验播报模式和交互模式。\n开始前，请完成以下准备：')
     if(!view)return
     const check=text=>{const label=element('label'),input=element('input',null,label);input.type='checkbox';element('span',text,label);view.panel.insertBefore(label,view.footer);return input}
     const sound=check('声音已打开'),chat=check('同意本教程通过dsh发送消息（会产生模型用量）')
     const b=button(view.footer,'开始教学',()=>{
+      if(showWorkspaceIssue(adapter.workspaceIssue?.()))return
       b.disabled=true
       const consent={sound:sound.checked,chat:chat.checked}
       // User gesture unlocks audio before either mode is demonstrated.

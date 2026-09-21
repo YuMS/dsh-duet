@@ -1,6 +1,6 @@
 {
   "name": "dsh-duet",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "duet（二重奏）：只用语音就能操作 DSH，边听边说、随时插话的全双工语音助手。",
   "keywords": [
     "dsh-plugin",
@@ -22,7 +22,7 @@
   "scripts": {
     "test": "node scripts/test.mjs",
     "check": "node scripts/check-package.mjs",
-    "test:browser": "node tests/browser/settings.mjs && node tests/browser/tutorial.mjs && node tests/browser/feedback.mjs && node tests/browser/connection-hint.mjs",
+    "test:browser": "node tests/browser/settings.mjs && node tests/browser/tutorial.mjs && node tests/browser/feedback.mjs && node tests/browser/connection-hint.mjs && node tests/browser/resilience.mjs",
     "test:host": "node tests/host/isolated-host.mjs",
     "prepack": "npm run check"
   },

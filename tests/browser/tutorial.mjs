@@ -11,8 +11,8 @@ try{
     if(path.endsWith('.mjs'))return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.replace('/duet/assets/',''),import.meta.url),'utf8')})
     return route.fulfill({contentType:'text/html',body:`<!doctype html><html><head></head><body style="margin:0;background:#111923;color:white;font-family:system-ui"><aside style="width:220px;height:100vh;border-right:1px solid #445"><h2>DeepSeek Harness</h2><div data-slot="sidebar.sessions">教学会话</div><div id="dsh-duet-controls" style="position:fixed;bottom:30px;left:20px;width:170px;height:35px">duet <button data-voice="speaker">喇叭</button></div></aside><main style="position:absolute;left:270px;top:40px"><h2>对话</h2></main><div data-composer-input style="position:fixed;bottom:40px;left:270px;width:750px;min-height:55px;border:1px solid #678;padding:12px"></div><script type="module">
       import {mountTutorial} from '/duet/assets/client/tutorial.mjs';
-      window.calls=[];let current='original',mode='off';const drafts=new Map();
-      const adapter={mode:()=>mode,current:()=>current,unlock:async()=>{},
+      window.calls=[];window.workspaceIssue=null;let current='original',mode='off';const drafts=new Map();
+      const adapter={workspaceIssue:()=>window.workspaceIssue,mode:()=>mode,current:()=>current,unlock:async()=>{},
         create:async name=>{calls.push(['create',name]);const id='s'+drafts.size;drafts.set(id,'');return id},
         focus:async id=>{current=id;calls.push(['focus',id])},
         write:async(id,text,expected)=>{if(drafts.get(id)!==expected)throw Error('draft conflict');drafts.set(id,text);document.querySelector('[data-composer-input]').textContent=text;calls.push(['write',text])},
@@ -31,6 +31,14 @@ try{
     for(const kind of ['mic','speaker'])controls.querySelector(`[data-voice="${kind}"]`).innerHTML=`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="${paths[kind]}"/></svg>`
   })
   const click=text=>page.getByRole('button',{name:text,exact:true}).click()
+  await page.evaluate(()=>{window.workspaceIssue='workspace_required';tutorial.open()})
+  await page.getByRole('heading',{name:'请先创建 workspace'}).waitFor()
+  assert.match(await page.locator('.duet-tutorial').innerText(),/在 DSH 中创建/)
+  assert.deepEqual(await page.evaluate(()=>calls),[])
+  await page.evaluate(()=>{window.workspaceIssue='workspace_loading'})
+  await click('重新检查');await page.getByRole('heading',{name:'正在加载 workspace'}).waitFor()
+  await page.evaluate(()=>{window.workspaceIssue=null})
+  await click('重新检查')
   await page.getByRole('heading',{name:'来试试用声音操作吧'}).waitFor()
   assert.deepEqual(await page.evaluate(()=>calls),[])
   assert.equal(await page.getByRole('dialog').count(),0)

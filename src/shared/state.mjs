@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.1.2'
+export const PLUGIN_VERSION = '0.1.3'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
@@ -109,6 +109,10 @@ export class DuetState {
       workspace_loading: '正在加载 workspace，请稍后再试。',
       workspace_unavailable: '无法读取 workspace，请刷新 DSH 后重试。',
       microphone_unavailable: '无法使用所选麦克风，请在设置中检查设备与浏览器权限',
+      microphone_disconnected: '麦克风已断开或权限已撤销，交互模式已关闭。请检查设备后重新开启。',
+      audio_capture_failed: '麦克风采集异常，交互模式已关闭。请检查设备后重新开启。',
+      voice_start_timeout: '连接超时，请检查网络或麦克风授权后重新开启。',
+      harness_sync_failed: '无法继续同步 DSH 会话，语音已关闭。请检查 DSH 后重新开启。',
       interaction_mode_unavailable: '交互模式暂时不可用，请稍后再试',
       broadcast_mode_unavailable: '播报模式暂时不可用，请稍后再试',
       client_protocol_unsupported: '插件与服务器协议不兼容，请更新插件或联系服务管理员',

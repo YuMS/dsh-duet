@@ -5,8 +5,9 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
 try {
   const page = await browser.newPage({ viewport: { width: 480, height: 360 } })
   await page.route('http://127.0.0.1:19359/**', async route => {
-    if (new URL(route.request().url()).pathname.endsWith('.mjs')) return route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../src/client/connection-hint.mjs', import.meta.url), 'utf8') })
-    return route.fulfill({ contentType: 'text/html', body: '<div id="controls" style="position:absolute;bottom:30px;left:16px"><button data-voice="mic">交互</button></div><script type="module">import {mountConnectionHint} from "/hint.mjs"; window.hint=mountConnectionHint(document.querySelector("#controls"));</script>' })
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('.mjs')) return route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../src/client/'+(path==='/layout.mjs'?'controls-layout':'connection-hint')+'.mjs', import.meta.url), 'utf8') })
+    return route.fulfill({ contentType: 'text/html', body: '<div id="sidebar" style="position:absolute;bottom:30px;left:16px;width:200px;overflow:hidden;transform:translateZ(0)"><div id="controls" style="display:flex;align-items:center;gap:4px"><span id="dsh-duet-entry">duet.</span><button data-voice="mic">交互</button><button data-voice="speaker">播报</button></div></div><script type="module">import {mountConnectionHint} from "/hint.mjs"; import {mountControlsLayout} from "/layout.mjs"; window.hint=mountConnectionHint(document.querySelector("#controls"));window.stopLayout=mountControlsLayout(document.querySelector("#controls"));</script>' })
   })
   await page.goto('http://127.0.0.1:19359/')
   await page.clock.install()
@@ -17,6 +18,18 @@ try {
   await update('online', true); assert.equal(await hint.isVisible(), true)
   assert.equal(await hint.innerText(), '连接成功，可以试试对我说“你好”。')
   const box = await hint.boundingBox(); assert.ok(box.x >= 0 && box.x + box.width <= 480)
+  assert.equal(await hint.evaluate(e=>e.parentElement===document.body),true)
+  assert.equal(await page.locator('#controls').getAttribute('data-compact'),'false')
+  await page.evaluate(()=>{document.querySelector('#sidebar').style.width='64px'})
+  await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='true')
+  const mic=await page.locator('[data-voice=mic]').boundingBox(),speaker=await page.locator('[data-voice=speaker]').boundingBox()
+  assert.ok(speaker.y>=mic.y+mic.height);assert.ok(Math.abs(mic.x+mic.width/2-speaker.x-speaker.width/2)<2)
+  assert.equal(await page.locator('#dsh-duet-entry').isVisible(),false)
+  await page.evaluate(()=>{document.querySelector('#sidebar').style.width='220px'})
+  await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='false')
+  assert.equal(await page.locator('#dsh-duet-entry').isVisible(),true)
+  await page.evaluate(()=>{const sidebar=document.querySelector('#sidebar');sidebar.style.left='400px';window.dispatchEvent(new Event('resize'))})
+  const edge=await hint.boundingBox();assert.ok(edge.x+edge.width<=480-16)
   await page.clock.fastForward(8001); assert.equal(await hint.isVisible(), false)
   await update('online', true); assert.equal(await hint.isVisible(), false)
   await update('off', false); await update('online', true)
@@ -26,6 +39,6 @@ try {
   assert.equal(await hint.isVisible(), false)
   await update('off', false); await update('online', true)
   await update('tts_only', true); assert.equal(await hint.isVisible(), false)
-  await page.evaluate(() => window.hint.dispose()); assert.equal(await hint.count(), 0)
+  await page.evaluate(() => {window.hint.dispose();window.stopLayout()}); assert.equal(await hint.count(), 0)
   console.log('Connection hint: ready-only, online-only, once per connection, timeout, escape, mode switch, teaching suppression, disposal passed')
 } finally { await browser.close() }

@@ -4,11 +4,11 @@ import { chromium } from 'playwright'
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
 try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
-  let writes = 0
+  let writes = 0, slow = false, reply
   await page.route('http://127.0.0.1:19349/**', async route => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith('.mjs')) return route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../src/client/feedback.mjs', import.meta.url), 'utf8') })
-    if (path.endsWith('/api/feedback')) { writes++; return route.fulfill({ status: 201, json: { persisted: true } }) }
+    if (path.endsWith('/api/feedback')) { writes++; if(slow)await new Promise(resolve=>reply=resolve);return route.fulfill({status:slow?503:201,json:slow?{}:{persisted:true}}) }
     return route.fulfill({ contentType: 'text/html', body: `<button id="anchor" style="position:fixed;bottom:85px;left:18px;height:36px;width:180px">duet modes</button><script type="module">import {mountRating} from '/feedback.mjs';window.show=()=>mountRating(document.querySelector('#anchor'),'fixture-ticket');</script>` })
   })
   await page.goto('http://127.0.0.1:19349/')
@@ -29,5 +29,15 @@ try {
   await panel.getByRole('button', { name: '提交评分', exact: true }).click()
   await panel.waitFor({ state: 'detached' })
   assert.equal(writes, 1)
+  slow=true;await page.evaluate(()=>show())
+  await panel.getByRole('button',{name:'4 星',exact:true}).click()
+  await panel.getByRole('button',{name:'提交评分',exact:true}).click()
+  await page.clock.fastForward(11000)
+  assert.equal(await panel.count(),1);assert.match(await panel.innerText(),/正在提交/)
+  while(!reply)await new Promise(resolve=>setTimeout(resolve,10))
+  reply();await panel.getByRole('heading',{name:'提交失败，请重试'}).waitFor()
+  await page.clock.fastForward(10000);assert.equal(await panel.count(),1)
+  slow=false;await panel.getByRole('button',{name:'提交评分',exact:true}).click();await panel.waitFor({state:'detached'})
+  assert.equal(writes,3)
   console.log('Rating: no overlap, title/stars/two buttons, 10-second countdown, no auto-submit, saved on explicit click passed')
 } finally { await browser.close() }

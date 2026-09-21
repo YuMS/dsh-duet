@@ -1,4 +1,4 @@
-import { microphoneConstraints } from './microphone.mjs?v=0.1.2'
+import { microphoneConstraints } from './microphone.mjs?v=0.1.3'
 
 /** Browser-owned microphone and PCM playback. No microphone is requested in tts_only. */
 export class DuetAudio {
@@ -12,6 +12,7 @@ export class DuetAudio {
     this.epoch = 0
     this.nextTime = 0
     this.tones = new Set()
+    this.captureCleanup = null
   }
 
   prepare() {
@@ -36,12 +37,43 @@ export class DuetAudio {
     }
   }
 
-  async startMic(send) {
+  async startMic(send, onFailure = () => {}) {
     const epoch = this.epoch
     // Exact selection: an unplugged device must not silently use a different mic.
     const stream = await navigator.mediaDevices.getUserMedia(microphoneConstraints())
     if (epoch !== this.epoch) { stream.getTracks().forEach(t => t.stop()); return }
     this.stream = stream
+    let failed = false
+    const cleanups = [], muteTimers = new Map()
+    const fail = code => {
+      if (failed || epoch !== this.epoch) return
+      failed = true
+      this.stop()
+      onFailure(code)
+    }
+    const watch = (target, event, fn) => {
+      target.addEventListener(event, fn)
+      cleanups.push(() => target.removeEventListener(event, fn))
+    }
+    this.captureCleanup = () => {
+      for (const cleanup of cleanups) cleanup()
+      for (const timer of muteTimers.values()) clearTimeout(timer)
+      muteTimers.clear()
+    }
+    for (const track of stream.getAudioTracks()) {
+      const muted = () => {
+        clearTimeout(muteTimers.get(track))
+        // Brief device transitions can recover. This is a media-track failure
+        // signal, not an energy/VAD test: ordinary user silence never trips it.
+        muteTimers.set(track, setTimeout(() => { if (track.muted) fail('audio_capture_failed') }, 10000))
+      }
+      watch(track, 'ended', () => fail('microphone_disconnected'))
+      watch(track, 'mute', muted)
+      watch(track, 'unmute', () => { clearTimeout(muteTimers.get(track)); muteTimers.delete(track) })
+      if (track.readyState === 'ended') fail('microphone_disconnected')
+      else if (track.muted) muted()
+    }
+    if (epoch !== this.epoch) return
     const code = `class Capture extends AudioWorkletProcessor {
       constructor(){super();this.phase=0;this.sum=0;this.count=0;this.pcm=new Int16Array(1280);this.offset=0;}
       process(inputs){const a=inputs[0]?.[0];if(!a)return true;
@@ -56,6 +88,7 @@ export class DuetAudio {
     if (epoch !== this.epoch) { stream.getTracks().forEach(t => t.stop()); return }
     this.source = this.context.createMediaStreamSource(stream)
     this.capture = new AudioWorkletNode(this.context, 'duet-audio-capture')
+    watch(this.capture, 'processorerror', () => fail('audio_capture_failed'))
     this.capture.port.onmessage = e => { if (epoch === this.epoch) send(e.data) }
     this.mute = this.context.createGain()
     this.mute.gain.value = 0
@@ -122,6 +155,8 @@ export class DuetAudio {
 
   stop() {
     this.epoch++
+    this.captureCleanup?.()
+    this.captureCleanup = null
     for (const tone of this.tones) { try { tone.stop() } catch {} }
     this.tones.clear()
     this.stream?.getTracks().forEach(t => t.stop())

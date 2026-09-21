@@ -1,23 +1,27 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.2'
-import { DuetAudio } from './audio.mjs?v=0.1.2'
-import { HarnessRPCExecutor } from './rpc.mjs?v=0.1.2'
-import { composerAccess, observeComposer, focusedSession } from './composer.mjs?v=0.1.2'
-import { mountTutorial } from './tutorial.mjs?v=0.1.2'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.2'
-import { mountRating } from './feedback.mjs?v=0.1.2'
-import { createAudioUploadConsent } from './consent.mjs?v=0.1.2'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.2'
-import { nativeInteractions } from './interactions.mjs?v=0.1.2'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.1.2'
-import { workspaceIssue, requireWorkspace, browserSessionCatalog } from './workspaces.mjs?v=0.1.2'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.3'
+import { DuetAudio } from './audio.mjs?v=0.1.3'
+import { HarnessRPCExecutor } from './rpc.mjs?v=0.1.3'
+import { composerAccess, observeComposer, focusedSession } from './composer.mjs?v=0.1.3'
+import { mountTutorial } from './tutorial.mjs?v=0.1.3'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.3'
+import { mountRating } from './feedback.mjs?v=0.1.3'
+import { createAudioUploadConsent } from './consent.mjs?v=0.1.3'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.3'
+import { nativeInteractions } from './interactions.mjs?v=0.1.3'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.1.3'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.1.3'
+import { mountNotice } from './notice.mjs?v=0.1.3'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog } from './workspaces.mjs?v=0.1.3'
 
 export function mountDuet(ctx) {
   const audio = new DuetAudio()
   const audioConsent = createAudioUploadConsent()
-  let disposed = false, controls, toastTimer, pollRunning = false, cursor = null, resultEpoch = null
+  let disposed = false, controls, pollRunning = false, cursor = null, resultEpoch = null
+  let nextPollAt = 0, pollController, pollWakePending = false, pollFailureSince = null, pollFailures = 0, pollGeneration = -1
+  const notices = mountNotice(() => controls)
   const labels = new Map()
   let clientTraceId = null, diagnosticCount = 0
-  let tutorial, teaching, ratingPanel, connectionHint
+  let tutorial, teaching, ratingPanel, connectionHint, stopControlsLayout
   const diagnostic = data => {
     if (++diagnosticCount > 100) return
     const bounded = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 4000) : v]))
@@ -33,31 +37,12 @@ export function mountDuet(ctx) {
   const notice = (text, { upgrade = false } = {}) => {
     connectionHint?.dismiss()
     if (upgrade) { ratingPanel?.dispose(); ratingPanel = null }
-    const toast = controls?.querySelector('[role=status]')
-    if (!toast) return
-    toast.textContent = text
-    toast.hidden = false
-    clearTimeout(toastTimer)
-    if (upgrade) {
-      const help = document.createElement('details')
-      const title = document.createElement('summary')
-      title.textContent = '如何升级'
-      help.append(title)
-      const instruction = document.createElement('p')
-      instruction.textContent = '通过 npm 安装的用户，可在终端运行：'
-      const command = document.createElement('code')
-      command.textContent = 'dsh plugin --profile web add dsh-duet@latest'
-      command.style.cssText = 'display:block;white-space:normal;overflow-wrap:anywhere;margin:8px 0'
-      const after = document.createElement('p')
-      after.textContent = '其他安装方式请从原来源更新。完成后重启 DSH 并刷新页面，再手动开启语音。'
-      help.append(instruction, command, after)
-      const dismiss = document.createElement('button')
-      dismiss.textContent = '知道了'
-      dismiss.onclick = () => { toast.hidden = true }
-      toast.append(help, dismiss)
-    } else toastTimer = setTimeout(() => { toast.hidden = true }, 8000)
+    notices.show(text, { upgrade })
   }
   const draw = state => {
+    if (pollGeneration !== state.generation) {
+      pollGeneration = state.generation; nextPollAt = 0; pollFailureSince = null; pollFailures = 0
+    }
     if (!controls) return
     for (const [kind, active] of [['mic', state.mode === 'online'], ['speaker', state.mode === 'tts_only']]) {
       const button = controls.querySelector(`[data-voice=${kind}]`)
@@ -86,6 +71,10 @@ export function mountDuet(ctx) {
     const connectionTraceId = clientTraceId
     const report = data => diagnostic({ ...data, client_trace_id: connectionTraceId, mode })
     let ws, closed = false, release, ready = false, stopComposer
+    const opening = new AbortController()
+    const startupTimer = setTimeout(() => {
+      if (!closed) receive({ type: 'error', code: 'voice_start_timeout' })
+    }, 45000)
     const send = message => {
       if (ws?.readyState !== WebSocket.OPEN || closed) return
       if (ws.bufferedAmount > 1_000_000) { receive({ type: 'error', code: 'voice_backpressure' }); return }
@@ -103,6 +92,8 @@ export function mountDuet(ctx) {
       async close() {
         report({ event: 'browser.connection_close', buffered_bytes: ws?.bufferedAmount })
         closed = true
+        clearTimeout(startupTimer)
+        opening.abort()
         stopComposer?.()
         rpc.close()
         audio.stop()
@@ -119,7 +110,10 @@ export function mountDuet(ctx) {
     const open = async () => {
       if (closed) return
       // Establish/renew the host-signed anonymous cookie before the WS handshake.
-      const identity=await fetch('/duplex-control/api/voice/config',{credentials:'same-origin',cache:'no-store'})
+      const configTimer = setTimeout(() => opening.abort(Error('voice_start_timeout')), 10000)
+      let identity
+      try { identity = await fetch('/duplex-control/api/voice/config', {credentials:'same-origin',cache:'no-store',signal:opening.signal}) }
+      finally { clearTimeout(configTimer) }
       if(!identity.ok)throw Error('voice_config_unavailable')
       requireWorkspace(ctx)
       if(closed)return
@@ -152,7 +146,9 @@ export function mountDuet(ctx) {
             await audio.prepare()
             if (closed) return
             if (mode === 'online') {
-              try { await audio.startMic(send) }
+              try { await audio.startMic(send, code => {
+                if (!closed) { report({event:'browser.capture_failed',code}); receive({type:'error',code}) }
+              }) }
               catch (error) {
                 report({ event: 'browser.microphone_failed', name: error?.name })
                 if (!closed) receive({ type: 'error', code: 'microphone_unavailable' })
@@ -163,6 +159,7 @@ export function mountDuet(ctx) {
               context_state: audio.context?.state, base_latency: audio.context?.baseLatency,
               user_agent: navigator.userAgent })
             if (!closed) {
+              clearTimeout(startupTimer)
               receive({ type: 'ready' })
               try { audio.connectedChime() } catch { /* A notification must not break voice. */ }
             }
@@ -190,7 +187,9 @@ export function mountDuet(ctx) {
         if (closed) return
         if (!lock) { receive({ type: 'error', code: 'voice_tab_in_use' }); return }
         const held = new Promise(resolve => { release = resolve })
-        await open()
+        // Opening may hang; ownership ends when close() releases it, not when
+        // a fetch or browser permission request eventually resolves.
+        void open().catch(error => { if (!closed) receive({type:'error',code:opening.signal.aborted?'voice_start_timeout':error.message||'voice_connection_failed'}) })
         await held
       }).catch(() => { if (!closed) receive({ type: 'error', code: 'voice_connection_failed' }) })
     } else queueMicrotask(() => receive({ type: 'error', code: 'voice_lock_unavailable' }))
@@ -266,12 +265,8 @@ export function mountDuet(ctx) {
     settings.style.cssText = 'display:flex;color:inherit;padding:5px;border-radius:6px'
     settings.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>'
     controls.append(settings)
-    const toast = document.createElement('div')
-    toast.setAttribute('role', 'status')
-    toast.setAttribute('aria-live', 'polite')
-    toast.hidden = true
-    toast.style.cssText = 'position:absolute;bottom:100%;left:0;z-index:9999;min-width:180px;max-width:280px;background:#252c38;color:white;padding:10px;border-radius:8px;font-size:12px;box-shadow:0 3px 18px #0005'
-    controls.append(toast)
+    stopControlsLayout?.()
+    stopControlsLayout = mountControlsLayout(controls)
     connectionHint?.dispose()
     connectionHint = mountConnectionHint(controls)
     draw(state)
@@ -281,25 +276,27 @@ export function mountDuet(ctx) {
   const observer = new MutationObserver(mount)
   observer.observe(document.body, { subtree: true, childList: true })
 
-  const api = async path => {
+  const api = async (path, signal) => {
     const response = await fetch(`/duplex-control/api/${path}`, { cache: 'no-store',
-      headers: { 'X-Duet-Native-Interactions': '1' } })
-    if (!response.ok) throw new Error('harness_unavailable')
+      signal, headers: { 'X-Duet-Native-Interactions': '1' } })
+    if (!response.ok) throw Object.assign(new Error('harness_unavailable'), {status:response.status})
     return response.json()
   }
   const poll = async () => {
     if (disposed || pollRunning) return
     pollRunning = true
+    pollWakePending = false
+    const generation = state.generation, controller = new AbortController(), startedAt = Date.now()
+    pollController = controller
+    const timeout = setTimeout(() => controller.abort(), 5000)
     try {
-      const [catalog, completed, health] = await Promise.all([api('sessions'), api(`results?after=${cursor ?? 0}&limit=100`), api('health')])
+      const [catalog, completed, health] = await Promise.all([api('sessions',controller.signal), api(`results?after=${cursor ?? 0}&limit=100`,controller.signal), api('health',controller.signal)])
       if (disposed) return
       catalog.sessions = browserSessionCatalog(ctx, catalog.sessions)
       const issue = workspaceIssue(ctx)
       if (issue === 'workspace_required' && state.mode !== 'off') state.fail(issue)
       for (const s of catalog.sessions) labels.set(s.session_id, s.label)
       const bootstrap = cursor === null || resultEpoch !== health.focus_epoch
-      resultEpoch = health.focus_epoch
-      cursor = bootstrap ? completed.current_cursor : completed.next_cursor
       let composer
       const id = focusedSession(ctx)
       const scope = id ? ctx.sessions.scope(id) : undefined
@@ -317,15 +314,27 @@ export function mountDuet(ctx) {
           text: (job.status === 'succeeded' ? job.result : (job.error || job.result)) || '未返回结果。',
         })),
       })
+      resultEpoch = health.focus_epoch
+      cursor = bootstrap ? completed.current_cursor : completed.next_cursor
+      if (pollFailures >= 3 && state.mode !== 'off') notice('会话同步已恢复。')
+      pollFailureSince = null; pollFailures = 0
     } catch (error) {
-      if (state.mode !== 'off') {
+      if (!disposed && generation === state.generation && state.mode !== 'off') {
         diagnostic({ event: 'browser.poll_failed', message: String(error?.message || error), stack: error?.stack })
-        state.fail('harness_unavailable')
+        pollFailureSince ??= Date.now(); pollFailures++
+        if ([401,403].includes(error.status) || (pollFailures >= 3 && Date.now()-pollFailureSince >= 15000)) state.fail('harness_sync_failed')
+        else if (pollFailures === 3) notice('会话同步暂时中断，正在重试。')
       }
     }
-    finally { pollRunning = false }
+    finally {
+      clearTimeout(timeout); controller.abort(); pollController = null; pollRunning = false
+      nextPollAt = pollWakePending ? 0 : startedAt + (state.mode !== 'off' || tutorial?.active ? 1000 : document.hidden ? 15000 : 5000)
+    }
   }
-  const timer = setInterval(() => { void poll(); state.tick() }, 1000)
+  const timer = setInterval(() => { if (Date.now() >= nextPollAt) void poll(); state.tick() }, 1000)
+  const wakePoll = () => { pollWakePending = true; nextPollAt = 0 }
+  const unwatchSessions = ctx.sessions.list.subscribe?.(wakePoll)
+  const unwatchWorkspaces = ctx.workspaces?.list?.subscribe?.(wakePoll)
   const progress = setInterval(() => { if (state.connection) audio.progress(state.connection.send) }, 200)
   const visibility = () => { state.hidden = document.visibilityState !== 'visible'; state.tick(); void poll() }
   document.addEventListener('visibilitychange', visibility)
@@ -347,6 +356,9 @@ export function mountDuet(ctx) {
   teachingObserver.observe(document.body, { subtree: true, childList: true })
   return () => {
     disposed = true
+    pollController?.abort()
+    unwatchSessions?.(); unwatchWorkspaces?.()
+    notices.dispose()
     stopShortcuts()
     observer.disconnect()
     teachingObserver.disconnect()
@@ -354,7 +366,8 @@ export function mountDuet(ctx) {
     audioConsent.cancel()
     ratingPanel?.dispose()
     connectionHint?.dispose()
-    clearInterval(timer); clearInterval(progress); clearTimeout(toastTimer)
+    clearInterval(timer); clearInterval(progress)
+    stopControlsLayout?.()
     document.removeEventListener('visibilitychange', visibility)
     window.removeEventListener('error', pageError)
     window.removeEventListener('unhandledrejection', pageError)

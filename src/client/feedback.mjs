@@ -6,7 +6,7 @@ export function mountRating(anchor, sessionTicket) {
   panel.style.cssText='position:fixed;z-index:100020;width:min(300px,calc(100vw - 24px));box-sizing:border-box;background:#17212f;color:#edf3ff;border:1px solid #52647d;border-radius:16px;padding:16px;box-shadow:0 12px 40px #0006;font:14px/1.6 system-ui'
   const title=document.createElement('h3');title.textContent='这次语音体验怎么样？';title.style.margin='0 0 10px';panel.append(title)
   const stars=document.createElement('div');stars.setAttribute('role','group');stars.setAttribute('aria-label','1 到 5 星');panel.append(stars)
-  let rating=0,busy=false,requestId=crypto.randomUUID()
+  let rating=0,busy=false,disposed=false,requestId=crypto.randomUUID(),requestController,requestTimeout
   const buttons=[]
   for(let value=1;value<=5;value++){
     const b=document.createElement('button');b.type='button';b.textContent='☆';b.setAttribute('aria-label',`${value} 星`);b.setAttribute('aria-pressed','false')
@@ -23,21 +23,26 @@ export function mountRating(anchor, sessionTicket) {
     panel.style.top=(rect.top>=box.height+20?rect.top-box.height-12:rect.bottom+12)+'px'
   }
   let countdown,timeout
-  const dispose=()=>{clearInterval(countdown);clearTimeout(timeout);panel.remove();document.removeEventListener('keydown',onKey);window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true)}
+  const dispose=()=>{disposed=true;clearInterval(countdown);clearTimeout(timeout);clearTimeout(requestTimeout);requestController?.abort();panel.remove();document.removeEventListener('keydown',onKey);window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true)}
   const onKey=e=>{if(e.key==='Escape')dispose()}
   skip.onclick=dispose
   submit.onclick=async()=>{
-    if(busy||!rating)return
+    if(disposed||busy||!rating)return
     busy=true;submit.disabled=true;buttons.forEach(b=>b.disabled=true)
+    clearInterval(countdown);clearTimeout(timeout)
+    submit.textContent='正在提交…';skip.textContent='关闭'
+    requestController=new AbortController()
+    requestTimeout=setTimeout(()=>requestController.abort(),15000)
     try {
       const r=await fetch('/duplex-control/api/feedback',{method:'POST',credentials:'same-origin',
-        headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'},signal:AbortSignal.timeout(15000),
+        headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'},signal:requestController.signal,
         body:JSON.stringify({kind:'rating',request_id:requestId,session_ticket:sessionTicket,rating})})
       const result=await r.json()
+      if(disposed)return
       if(!r.ok||result.persisted!==true)throw Error('not_saved')
       dispose()
-    }catch{title.textContent='提交失败，请重试';submit.disabled=false;buttons.forEach(b=>b.disabled=false)}
-    finally{busy=false}
+    }catch{if(!disposed){title.textContent='提交失败，请重试';submit.disabled=false;buttons.forEach(b=>b.disabled=false)}}
+    finally{clearTimeout(requestTimeout);busy=false;if(!disposed)submit.textContent='提交评分'}
   }
   panel.append(submit,skip);document.body.append(panel);document.addEventListener('keydown',onKey)
   position();window.addEventListener('resize',position);window.addEventListener('scroll',position,true)

@@ -1,16 +1,17 @@
-# duet
+# duet.
 
-**只用语音，就能操作 DeepSeek Harness（DSH）。**
+**DSH 语音操控和语音播报**
+
+[![duet 演示视频（点击播放）](https://raw.githubusercontent.com/YuMS/dsh-duet/main/docs/media/duet-demo.jpg)](https://github.com/YuMS/dsh-duet/raw/refs/heads/main/docs/media/duet-demo.mp4)
 
 duet，意为「二重奏」。这里的 duet 使用全双工语音模型，可以边听边说，
 让你与 DSH 的交流不必一人一句地等待。
 
-说出需求、修改输入、发送任务、切换会话——把键盘上的操作交给声音。
-任务完成后，duet 会简短播报结果，让你不用一直盯着屏幕。
+说出需求、修改输入、发送任务、切换会话——把键盘上的操作交给声音。你可以随时插话、补充或纠正。处理任务之外，也可以聊聊天。
 
-你可以随时插话、补充或纠正。处理任务之外，也可以聊聊天。
+当然，你也可以用 duet 帮你只播报结果，让你不用一直盯着屏幕。
 
-目前处于**试用阶段**，duet 语音服务可以免费使用。
+最重要的是，duet 语音服务目前可以免费使用。
 
 ## 安装
 

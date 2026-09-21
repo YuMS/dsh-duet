@@ -304,7 +304,7 @@ try {
   mark('reload_single_toolbar', 'busy_returns_off')
   rejectBusy = false; rejectUpgrade = true
   await page.locator('[data-voice="mic"]').click()
-  const notice = page.locator('#dsh-duet-controls [role="status"]:visible')
+  const notice = page.locator('[data-duet-notice][role="status"]:visible')
   await notice.getByText('如何升级', { exact: true }).waitFor()
   assert.ok((await notice.innerText()).includes('0.9.99'))
   assert.ok((await notice.innerText()).includes(PLUGIN_VERSION))
