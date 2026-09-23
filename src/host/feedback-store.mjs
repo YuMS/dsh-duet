@@ -17,13 +17,13 @@ export class FeedbackService {
     return user
   }
   prune() { for(const [key,s] of this.sessions)if(this.now()-s.opened>86400000)this.sessions.delete(key) }
-  open(req, sessionId, mode) {
+  open(req, sessionId, mode, connectionConfig) {
     if(!this.enabled)return null
     this.prune()
     if(this.sessions.size>=2048||typeof sessionId!=='string'||!sessionId||sessionId.length>256)return null
     try {
       const ticket=randomUUID()
-      this.sessions.set(ticket,{user:this.user(req),sessionId,mode,opened:this.now(),closed:false})
+      this.sessions.set(ticket,{user:this.user(req),sessionId,mode,opened:this.now(),closed:false,connectionConfig})
       return ticket
     } catch { return null } // Feedback availability must not break voice.
   }
@@ -45,7 +45,7 @@ export class FeedbackService {
     const record={request_id:input.request_id,user_id:user,kind:input.kind,text:text.trim(),
       rating:session?input.rating:null,session_id:session?.sessionId??null,mode:session?.mode??null,
       created_at:new Date(this.now()).toISOString()}
-    const saved=await this.store.insert(record)
+    const saved=await this.store.insert(record,{config:session?.connectionConfig})
     return {persisted:true,request_id:input.request_id,...(saved?.archive_id?{archive_id:saved.archive_id}:{})}
   }
 }

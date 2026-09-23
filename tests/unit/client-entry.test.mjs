@@ -4,7 +4,14 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 
-const source = await readFile(new URL('../../src/client/entry.js', import.meta.url), 'utf8')
+const entrySource = await readFile(new URL('../../src/client/entry.js', import.meta.url), 'utf8')
+const bridgeSource = await readFile(new URL('../../src/client/composer-bridge.mjs', import.meta.url), 'utf8')
+const source = bridgeSource.replace(/^import .+$/m, `const currentSession = ctx => {
+  const s = ctx.sessions.list.getSnapshot()
+  return 'current' in s ? s.current : Object.keys(s.byId || {}).find(id => s.byId[id].retainedBy?.mainView > 0)
+}`).replace('export function', 'function') + `
+window.__ModuleLoader__.load({factory: () => ({apply: ctx => ctx.effect(
+  () => startComposerBridge(ctx, 'test-browser'), 'bridge server composer RPC')})})`
 
 async function composerRequest({ type = 'consume', attachments = [], legacy = false, race = false, overwrite = false, stale = false, modern = false } = {}) {
   let client
@@ -14,7 +21,7 @@ async function composerRequest({ type = 'consume', attachments = [], legacy = fa
   const completed = new Promise(resolve => { settle = resolve })
   const state = { draft: '保留完整输入', draftRev: 2, phase: 'plain', [legacy ? 'imageIds' : 'attachmentIds']: attachments }
   const hash = Buffer.from(await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(state.draft))).toString('hex')
-  const request = { id: 'r1', session_id: 's1', type, text: '替换正文', expected_revision: 2, expected_hash: hash, require_focus: true }
+  const request = { id: 'r1', target_client_id: 'test-browser', session_id: 's1', type, text: '替换正文', expected_revision: 2, expected_hash: hash, require_focus: true }
   request.overwrite = overwrite
   if (stale) { request.expected_revision = 0; request.expected_hash = '0'.repeat(64) }
   const input = {
@@ -105,36 +112,14 @@ test('host bridge supports explicit overwrite without disabling send validation'
   assert.equal(send.wrote, false)
 })
 
-for (const modern of [true, false]) {
-  test(`host focus opens the visible DSH conversation (${modern ? 'UI navigation' : 'legacy'})`, async () => {
-    let client, cleanup, selected = null, uiOpened = null, settle
-    const opened = new Promise(resolve => { settle = resolve })
-    const sessions = {
-      refresh: async () => {},
-      open: id => { selected = id; settle() },
-      list: { getSnapshot: () => ({ current: selected, byId: { s1: {} } }), subscribe: () => () => {} },
-    }
-    const context = {
-      sessions,
-      get: () => modern ? { openSession: id => { uiOpened = id; sessions.open(id) } } : undefined,
-      effect: (fn, label) => { if (label.includes('synchronize host and browser focus')) cleanup = fn() },
-    }
-    vm.runInNewContext(source, {
-      window: { __ModuleLoader__: { load: definition => { client = definition.factory() } } },
-      AbortController, console, crypto: webcrypto,
-      setTimeout, clearTimeout, setInterval: () => 1, clearInterval: () => {},
-      document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
-      fetch: async () => ({ ok: true, json: async () => ({ session_id: 's1', revision: 1, focus_epoch: 'epoch1' }) }),
-    })
-    client.apply(context)
-    let timer
-    try {
-      await Promise.race([opened, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('focus timeout')), 2000) })])
-      assert.equal(selected, 's1')
-      assert.equal(uiOpened, modern ? 's1' : null)
-    } finally { clearTimeout(timer); cleanup?.() }
-  })
-}
+test('idle plugin pages register no global focus or composer synchronization', () => {
+  let client; const effects = []
+  vm.runInNewContext(entrySource, { window: {__ModuleLoader__: {load: d => {client = d.factory()}}} })
+  client.apply({effect: (_fn, label) => effects.push(label)})
+  assert.equal(effects.length, 2)
+  assert.ok(effects.every(label => !/focus|composer/.test(label)))
+  assert.ok(!entrySource.includes('BroadcastChannel'))
+})
 
 test('hidden composer bridge re-arms long poll without intervals and recovers hung fetch', async () => {
   let client, cleanup, finishPoll

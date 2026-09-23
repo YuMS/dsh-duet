@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.1.3'
+export const PLUGIN_VERSION = '0.1.4'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''

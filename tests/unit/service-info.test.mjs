@@ -25,6 +25,6 @@ test('unavailable, oversized and path-like names do not invent or expose models'
 test('changing service discards in-flight model metadata from previous service', async () => {
   let resolve
   const info=new ServiceInfo(()=>config,()=>new Promise(r=>{resolve=r}))
-  const pending=info.get();info.invalidate();resolve(new Response(JSON.stringify({schema_version:1,models})))
+  const pending=info.get();await Promise.resolve();info.invalidate();resolve(new Response(JSON.stringify({schema_version:1,models})))
   assert.deepEqual(await pending,{status:'unavailable',models:null})
 })

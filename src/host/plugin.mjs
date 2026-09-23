@@ -13,6 +13,7 @@ import { PLUGIN_VERSION } from '../shared/state.mjs'
 import { buildSessionCatalog } from '../shared/catalog.mjs'
 import { publicAsset } from './assets.mjs'
 import { duetEnv } from './environment.mjs'
+import { EndpointDiscovery } from './endpoint-discovery.mjs'
 
 const ROUTE = '/duplex-control'
 const PAGE_ROUTE = '/duet'
@@ -68,6 +69,7 @@ function publicComposerRequest(request) {
     overwrite: request.overwrite,
     text: request.text,
     claimed_by: request.claimed_by || null,
+    target_client_id: request.target_client_id || null,
     created_at: request.created_at,
   }
 }
@@ -88,6 +90,15 @@ function codedError(code, message, status = 409) {
   error.code = code
   error.status = status
   return error
+}
+
+function browserOwner(req) {
+  const id = req.headers['x-duet-browser-client']
+  if (id === undefined) return null // Legacy callers remain separate from bound requests.
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
+    throw codedError('invalid_browser_owner', 'Invalid browser connection identity', 400)
+  }
+  return id
 }
 
 function assistantText(event) {
@@ -168,12 +179,14 @@ export function apply(ctx, options = {}) {
   const audit = new DuetTrace({ kind: 'host', plugin_version: PLUGIN_VERSION, pid: process.pid },
     { ...options.traceOptions, secrets: [voice.authorization] })
   ctx.effect(() => () => { void audit.close({ reason: 'plugin_dispose' }) })
-  const notices = new ServiceNotices(() => settings.effective())
-  const serviceInfo = new ServiceInfo(() => settings.effective())
-  const feedbackStore = options.feedbackStore ?? (options.feedbackDisabled ? null : new RemoteFeedback(()=>settings.effective(),{keyPath:options.feedbackIdentityPath}))
+  const discovery = new EndpointDiscovery(() => settings.effective(), {...options.endpointDiscoveryOptions, changed: () => {notices.invalidate();serviceInfo.invalidate()}})
+  const notices = new ServiceNotices(() => discovery.effective(), (url,options) => discovery.fetch(url,options))
+  const serviceInfo = new ServiceInfo(() => discovery.effective(), (url,options) => discovery.fetch(url,options))
+  discovery.refreshIfDue()
+  const feedbackStore = options.feedbackStore ?? (options.feedbackDisabled ? null : new RemoteFeedback(()=>discovery.effective(),{keyPath:options.feedbackIdentityPath}))
   const feedback = new FeedbackService(feedbackStore)
   let duetProxy
-  ctx.effect(() => { duetProxy = registerDuetProxy(ctx, voice, feedback, () => (ctx.workspaceRegistry.list?.() || []).length > 0); return duetProxy })
+  ctx.effect(() => { duetProxy = registerDuetProxy(ctx, voice, feedback, () => (ctx.workspaceRegistry.list?.() || []).length > 0, discovery); return duetProxy })
 
   ctx.effect(() => () => { hostAbort.abort() })
 
@@ -268,6 +281,7 @@ export function apply(ctx, options = {}) {
       overwrite: type === 'set' && payload.overwrite === true,
       text: payload.text,
       claimed_by: '',
+      target_client_id: payload.target_client_id || null,
       created_at: nowSeconds(),
       resolve,
       reject,
@@ -315,7 +329,7 @@ export function apply(ctx, options = {}) {
     while (jobOrder.length > MAX_JOBS) jobs.delete(jobOrder.shift())
   }
 
-  const enqueueTask = async (sessionId, task, origin = 'duplex_control') => {
+  const enqueueTask = async (sessionId, task, origin = 'duplex_control', syncFocus = true) => {
     const normalizedTask = String(task || '')
     if (!normalizedTask.trim()) throw codedError('empty_task', 'Harness task is empty', 400)
     const id = randomUUID().replaceAll('-', '')
@@ -350,7 +364,7 @@ export function apply(ctx, options = {}) {
       job.completion_seq = completionSequence
       throw error
     }
-    selectSession(sessionId)
+    if (syncFocus) selectSession(sessionId)
     return job
   }
 
@@ -504,6 +518,7 @@ export function apply(ctx, options = {}) {
       try {
         const result = await settings.save(await readJson(req))
         Object.assign(voice, settings.effective())
+        discovery.invalidate()
         feedback.sessions.clear() // Never send an old rating to a newly selected backend.
         audit.secrets.push(voice.authorization)
         notices.invalidate()
@@ -654,7 +669,8 @@ export function apply(ctx, options = {}) {
       }
       touch()
       if (url.searchParams.get('wait') === '1'
-          && ![...composerRequests.values()].some(request => !request.claimed_by)) {
+          && ![...composerRequests.values()].some(request => !request.claimed_by
+            && (!request.target_client_id || request.target_client_id === clientId))) {
         await new Promise(resolve => {
           let timer
           const done = () => {
@@ -673,7 +689,8 @@ export function apply(ctx, options = {}) {
       if (res.destroyed || hostAbort.signal.aborted) return
       const pending = composerRequestOrder
         .map(id => composerRequests.get(id))
-        .filter(request => request !== undefined && !request.claimed_by)
+        .filter(request => request !== undefined && !request.claimed_by
+          && (!request.target_client_id || request.target_client_id === clientId))
         .slice(0, 20)
         .map(publicComposerRequest)
       sendJson(res, 200, {
@@ -697,6 +714,10 @@ export function apply(ctx, options = {}) {
       const request = composerRequests.get(requestId)
       if (request === undefined) {
         sendError(res, 404, 'composer request not found')
+        return
+      }
+      if (request.target_client_id && request.target_client_id !== clientId) {
+        sendError(res, 409, 'composer request belongs to a different browser connection')
         return
       }
       if (request.claimed_by && request.claimed_by !== clientId) {
@@ -763,6 +784,7 @@ export function apply(ctx, options = {}) {
     }
     const composer = pathname.match(new RegExp(`^${ROUTE}/api/sessions/([^/]+)/composer$`))
     if (composer !== null && ['GET', 'PUT'].includes(req.method)) {
+      const target_client_id = browserOwner(req)
       const sessionId = decodeURIComponent(composer[1])
       const sessions = await listSessions()
       if (!sessions.some(session => session.session_id === sessionId)) {
@@ -771,11 +793,11 @@ export function apply(ctx, options = {}) {
       }
       if (req.method === 'GET') {
         const requireFocus = new URL(req.url, 'http://localhost').searchParams.get('require_focus') === 'true'
-        if (requireFocus && sessionId !== activeSessionId) {
+        if (requireFocus && !target_client_id && sessionId !== activeSessionId) {
           throw codedError('focus_conflict', '当前聚焦会话已变化，请重新查询输入框')
         }
-        const state = await requestComposer('get', { session_id: sessionId, require_focus: requireFocus })
-        if (requireFocus && sessionId !== activeSessionId) {
+        const state = await requestComposer('get', { session_id: sessionId, require_focus: requireFocus, target_client_id })
+        if (requireFocus && !target_client_id && sessionId !== activeSessionId) {
           throw codedError('focus_conflict', '当前聚焦会话已变化，请重新查询输入框')
         }
         sendJson(res, 200, { composer: {
@@ -797,10 +819,11 @@ export function apply(ctx, options = {}) {
         sendError(res, 400, 'composer text must be a string')
         return
       }
-      if (body.require_focus === true && sessionId !== activeSessionId) {
+      if (body.require_focus === true && !target_client_id && sessionId !== activeSessionId) {
         throw codedError('focus_conflict', '当前聚焦会话已变化，请重新查询输入框')
       }
       const state = await requestComposer('set', {
+        target_client_id,
         session_id: sessionId,
         expected_revision: body.expected_revision,
         expected_hash: body.expected_hash,
@@ -815,6 +838,7 @@ export function apply(ctx, options = {}) {
       new RegExp(`^${ROUTE}/api/sessions/([^/]+)/composer/submit$`),
     )
     if (req.method === 'POST' && submitComposer !== null) {
+      const target_client_id = browserOwner(req)
       const sessionId = decodeURIComponent(submitComposer[1])
       const body = await readJson(req)
       const expectedRevision = body.expected_revision
@@ -833,6 +857,8 @@ export function apply(ctx, options = {}) {
         return
       }
       const consumed = await requestComposer('consume', {
+        target_client_id,
+        require_focus: Boolean(target_client_id),
         session_id: sessionId,
         expected_revision: expectedRevision,
         expected_hash: expectedHash,
@@ -847,10 +873,11 @@ export function apply(ctx, options = {}) {
       if (!task.trim()) throw codedError('empty_draft', '当前输入框为空，不能发送', 400)
       let job
       try {
-        job = await enqueueTask(sessionId, task)
+        job = await enqueueTask(sessionId, task, 'duplex_control', !target_client_id)
       } catch (error) {
         try {
           await requestComposer('set', {
+            target_client_id,
             session_id: sessionId,
             expected_revision: consumed.revision,
             expected_hash: consumed.hash,
@@ -890,7 +917,7 @@ export function apply(ctx, options = {}) {
         }
       }
       const created = await ctx.sessionController.create(workspaceId ? { workspaceId } : { cwd })
-      selectSession(created.sessionId)
+      if (!browserOwner(req)) selectSession(created.sessionId)
       if (name) {
         await ctx.sessionController.rename({ sessionId: created.sessionId, title: name })
       }
@@ -906,7 +933,7 @@ export function apply(ctx, options = {}) {
         sendError(res, 404, 'Harness session not found')
         return
       }
-      selectSession(sessionId)
+      if (!browserOwner(req)) selectSession(sessionId)
       sendJson(res, 200, {
         ok: true,
         active_session_id: sessionId,
@@ -961,7 +988,7 @@ export function apply(ctx, options = {}) {
         sessionId: created.sessionId,
         title,
       })
-      selectSession(created.sessionId)
+      if (!browserOwner(req)) selectSession(created.sessionId)
       sendJson(res, 201, {
         ok: true,
         session: {

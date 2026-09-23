@@ -8,11 +8,12 @@ export class ServiceInfo {
   async get() {
     if (this.cached && Date.now() < this.cached.expires) return this.cached.value
     if (this.inflight) return this.inflight
-    const epoch = this.epoch, config = this.getConfig()
+    const epoch = this.epoch
     const unavailable = { status: 'unavailable', models: null }
     const work = async () => {
       let value = unavailable
       try {
+        const config = await this.getConfig()
         const url = new URL(config.endpoints.online)
         url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:'
         url.pathname = url.pathname.replace(/\/ws\/?$/, '').replace(/\/$/, '') + '/api/service-info'

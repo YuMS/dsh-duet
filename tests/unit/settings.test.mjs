@@ -6,7 +6,27 @@ import { tmpdir } from 'node:os'
 import { DuetSettings, validateBackendURL, settingsWriteAllowed } from '../../src/host/settings.mjs'
 import { ServiceNotices } from '../../src/host/notices.mjs'
 import { duetConfig } from '../../src/host/proxy.mjs'
-import { DEFAULT_DUET_URL, PUBLIC_TRIAL_AUTHORIZATION, publicServiceAuthorization } from '../../src/host/service-defaults.mjs'
+import { DEFAULT_DUET_URL, PUBLIC_TRIAL_GATEWAY_URL, PUBLIC_TRIAL_AUTHORIZATION, publicServiceAuthorization } from '../../src/host/service-defaults.mjs'
+
+test('the approved gateway accepts a copied HTTP address and uses bundled auth', async t => {
+  const s = await fixture(t)
+  const address = new URL(PUBLIC_TRIAL_GATEWAY_URL)
+  await s.save({ revision: 0, backend_url: `http://${address.host}/` })
+  assert.equal(s.public().backend_url, PUBLIC_TRIAL_GATEWAY_URL)
+  assert.equal(s.effective().authorization, PUBLIC_TRIAL_AUTHORIZATION)
+  const reloaded = new DuetSettings(s.base, { path: s.path })
+  assert.equal(reloaded.effective().authorization, PUBLIC_TRIAL_AUTHORIZATION)
+  assert.ok(!JSON.stringify(s.public()).includes(PUBLIC_TRIAL_AUTHORIZATION))
+  await assert.rejects(s.save({ revision: 1, backend_url: `http://${address.host}.evil.test/` }), /requires_wss/)
+  await assert.rejects(s.save({ revision: 1, backend_url: `http://${address.host}/other` }), /requires_wss/)
+})
+
+test('HTTPS base URLs normalize without copying authentication to another service', async t => {
+  const s = await fixture(t)
+  await s.save({ revision: 0, backend_url: 'https://example.test/' })
+  assert.equal(s.public().backend_url, 'wss://example.test/ws?protocol=realtime_v2')
+  assert.equal(s.effective().authorization, '')
+})
 
 async function fixture(t, base = duetConfig({})) {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-settings-'))

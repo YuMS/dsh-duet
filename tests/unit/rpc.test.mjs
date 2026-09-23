@@ -5,6 +5,18 @@ import { HarnessRPCExecutor, validateRPC } from '../../src/client/rpc.mjs'
 const message = extra => ({ type: 'harness.rpc.request', connection_id: 'a'.repeat(32),
   request_id: 'b'.repeat(32), method: 'GET', path: '/api/sessions', ...extra })
 
+test('connection identity accompanies HTTP mutations and navigation finishes before reply', async () => {
+  const order=[]
+  const rpc=new HarnessRPCExecutor(() => order.push('reply'), async (_url, options) => {
+    assert.equal(options.headers['X-Duet-Browser-Client'],'owner-a')
+    order.push('host');return new Response(JSON.stringify({active_session_id:'s2'}))
+  }, undefined, null, undefined, {id:'owner-a',completed:async (_request, body) => {
+    assert.equal(body.active_session_id,'s2');order.push('local-navigation')
+  }})
+  await rpc.execute(message({method:'POST',path:'/api/sessions/s2/activate'}))
+  assert.deepEqual(order,['host','local-navigation','reply']);rpc.close()
+})
+
 test('real question/approval IDs including URL-encoded colon execute once', async () => {
   for (const kind of ['question', 'approval']) for (const colon of [':', '%3A', '%3a']) {
     const calls = [], replies = []

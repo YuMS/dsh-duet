@@ -5,6 +5,8 @@ import { once } from 'node:events'
 import { WebSocket, WebSocketServer } from 'ws'
 import { DEFAULT_DUET_URL, registerDuetProxy, duetConfig } from '../../src/host/proxy.mjs'
 import { FeedbackService } from '../../src/host/feedback-store.mjs'
+import { EndpointDiscovery } from '../../src/host/endpoint-discovery.mjs'
+import { PLUGIN_VERSION } from '../../src/shared/state.mjs'
 
 test('both modes default to the public trial address and retain explicit overrides', () => {
   assert.equal(new URL(DEFAULT_DUET_URL).hostname, 'duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com')
@@ -28,7 +30,7 @@ async function fixture(t, rejectStatus, overrides = {}) {
       ws.on('message', (raw, binary) => {
         const value = binary ? raw : JSON.parse(raw)
         messages.push(value)
-        if (value.type === 'session.update') ws.send(JSON.stringify({ type: 'session.created', session: { id:'voice-from-upstream', config: { harness_control_transport: 'client_rpc_v1', external_message_protocol: overrides.resultProtocol === false ? undefined : 'harness_result_v2' } } }))
+        if (value.type === 'session.update') ws.send(JSON.stringify({ type: 'session.created', connection_hint_reporting:overrides.hintReporting===true, session: { id:'voice-from-upstream', config: { harness_control_transport: 'client_rpc_v1', external_message_protocol: overrides.resultProtocol === false ? undefined : 'harness_result_v2' } } }))
         if (value.type === 'external_message') ws.send(JSON.stringify({ type: 'external_message.done', message_id: value.message_id }))
       })
     })
@@ -36,7 +38,7 @@ async function fixture(t, rejectStatus, overrides = {}) {
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening')
   const host = http.createServer()
   const url = `ws://127.0.0.1:${upstream.address().port}`
-  const stop = registerDuetProxy({ webServer: { registerUpgrade({ handler }) { host.on('upgrade', handler); return () => host.off('upgrade', handler) } } }, { ...duetConfig(), authorization: '', ...overrides, endpoints: { online: url, tts_only: url } }, overrides.feedback, overrides.canUseVoice)
+  const stop = registerDuetProxy({ webServer: { registerUpgrade({ handler }) { host.on('upgrade', handler); return () => host.off('upgrade', handler) } } }, { ...duetConfig(), authorization: '', ...overrides, endpoints: { online: url, tts_only: url } }, overrides.feedback, overrides.canUseVoice, overrides.discoveryFactory?.(url))
   host.listen(0, '127.0.0.1'); await once(host, 'listening')
   t.after(async () => {
     stop()
@@ -50,6 +52,56 @@ async function fixture(t, rejectStatus, overrides = {}) {
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+test('online and broadcast send the same session diagnostic schema',async t=>{
+  const values=[]
+  for(const mode of ['online','tts_only']){
+    const f=await fixture(t),ws=await begin(f,mode)
+    const payload=f.messages[0]
+    assert.equal(payload.client.mode,mode)
+    assert.equal(payload.session.io_mode,mode==='online'?'online':'external_only')
+    assert.equal(payload.client.metadata_version,'duet_session_v1')
+    values.push(Object.keys(payload.client).sort())
+    ws.close();await once(ws,'close')
+  }
+  assert.deepEqual(values[0],values[1])
+})
+test('hint telemetry is once-only, online-only, and negotiated with the server',async t=>{
+  for(const [mode,support,expected] of [['online',true,1],['online',false,0],['tts_only',true,0]]){
+    const f=await fixture(t,null,{hintReporting:support}),ws=await begin(f,mode)
+    const done=new Promise(resolve=>f.connections[0].on('message',raw=>{
+      if(JSON.parse(raw).type==='session.close')resolve()
+    }))
+    ws.send(JSON.stringify({type:'client.connection_hint',connection_hint:{text:'spoof',source:'router'}}))
+    ws.send(JSON.stringify({type:'client.connection_hint'}))
+    ws.send(JSON.stringify({type:'session.close'}));await done
+    const hints=f.messages.filter(m=>m.type==='client.connection_hint')
+    assert.equal(hints.length,expected)
+    if(expected)assert.deepEqual(hints[0].connection_hint,f.messages[0].client.connection_route.connection_hint)
+    ws.close();await once(ws,'close')
+  }
+})
+test('real proxy falls back before sending initial state and annotates the chosen connection',async t=>{
+  const unavailable=http.createServer()
+  let attempts=0
+  unavailable.on('upgrade',(_req,socket)=>{attempts++;socket.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')})
+  unavailable.listen(0,'127.0.0.1');await once(unavailable,'listening')
+  t.after(()=>new Promise(resolve=>unavailable.close(resolve)))
+  let selection
+  const f=await fixture(t,null,{discoveryFactory:url=>{
+    const config={endpoints:{online:url,tts_only:url},authorization:''}
+    selection=new EndpointDiscovery(()=>config)
+    selection.plan=async()=>[{url:`ws://127.0.0.1:${unavailable.address().port}`,config,selection:'recommended'},
+      {url,config,selection:'default'}]
+    return selection
+  }})
+  const ws=await begin(f,'online')
+  assert.equal(attempts,1);assert.equal(f.messages.filter(m=>m.type==='session.update').length,1)
+  const route=f.messages[0].client.connection_route
+  assert.equal(route.selection,'fallback');assert.equal(route.fallback_reason,'http_502')
+  assert.equal(route.selected_endpoint,(await selection.effective('online')).endpoints.online)
+  assert.equal(f.connections.length,1)
+  ws.close();await once(ws,'close')
+})
 test('no workspace blocks both modes before any upstream connection', async t => {
   let available = false
   const f = await fixture(t, null, { canUseVoice: () => available })
@@ -65,14 +117,21 @@ test('no workspace blocks both modes before any upstream connection', async t =>
   ws.close(); await once(ws, 'close')
 })
 test('session rating ticket is minted from upstream identity and marked closed by proxy',async t=>{
-  const feedback=new FeedbackService({userId:()=> 'alice',insert:async()=>{}})
-  const f=await fixture(t,null,{feedback}),ws=f.connect()
+  const anonymousId='anon_'+'a'.repeat(32)
+  const feedback=new FeedbackService({userId:()=> anonymousId,insert:async()=>{}})
+  const f=await fixture(t,null,{feedback})
+  for(const mode of ['online','tts_only']){
+  const ws=f.connect(mode)
   await once(ws,'open');const response=next(ws);ws.send(JSON.stringify({type:'session.update'}))
   const event=await response;const row=feedback.sessions.get(event.feedback_session_ticket)
   assert.equal(row.sessionId,'voice-from-upstream');assert.equal(row.closed,false)
+  const metadata=f.messages.filter(message=>message.type==='session.update').at(-1).client
+  assert.equal(metadata.anonymous_user_id,row.user)
+  assert.equal(metadata.identity_kind,'anonymous_browser')
   ws.close();await once(ws,'close')
   await new Promise(resolve=>setImmediate(resolve))
   assert.equal(row.closed,true)
+  }
 })
 async function begin(f, mode) {
   const ws = f.connect(mode)
@@ -104,7 +163,13 @@ test('old plugin is rejected before connecting upstream', async t => {
 test('tts_only freezes wire mode, buffers state without inference, forwards only notifications', async t => {
   const f = await fixture(t), ws = await begin(f, 'tts_only')
   assert.equal(f.messages[0].session.io_mode, 'external_only')
-  assert.deepEqual(f.messages[0].client, { name: 'dsh-duet', version: '0.1.0', protocol_major: 1 })
+  const {connection_route,...client}=f.messages[0].client
+  assert.equal(connection_route.selection,'custom')
+  assert.match(connection_route.selected_endpoint,/^ws:\/\/127\.0\.0\.1:/)
+  assert.deepEqual(client, { name: 'dsh-duet', version: '0.1.0', protocol_major: 1,
+    metadata_version:'duet_session_v1',mode:'tts_only',
+    host_version: PLUGIN_VERSION, page_binding: 'connection_owner_v1', client_trace_id: client.client_trace_id, page_id: '' })
+  assert.match(client.client_trace_id,/^[a-f0-9-]{36}$/)
   ws.send(JSON.stringify({ type: 'harness.state', state: { focused_session_id: 's1' } }))
   const done = next(ws)
   ws.send(JSON.stringify({ type: 'external_message', message_id: 'a', text: '任务完成' }))

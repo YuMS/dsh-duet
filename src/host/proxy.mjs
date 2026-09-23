@@ -1,7 +1,10 @@
 /** Same-origin voice relay; endpoint and compatibility policy belong to the DSH host. */
 import { createRequire } from 'node:module'
 import { DuetTrace } from './trace.mjs'
+import { PLUGIN_VERSION } from '../shared/state.mjs'
 import { duetEnv } from './environment.mjs'
+import { EndpointDiscovery, connectEndpoint } from './endpoint-discovery.mjs'
+import {sessionMetadata} from './session-metadata.mjs'
 import { DEFAULT_DUET_URL, publicServiceAuthorization } from './service-defaults.mjs'
 export { DEFAULT_DUET_URL } from './service-defaults.mjs'
 const require = createRequire(import.meta.url)
@@ -44,7 +47,7 @@ export function externalWithState(message, _state) {
     ...(source === undefined ? {} : { source: { ...source } }) }
 }
 
-export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, canUseVoice = () => true) {
+export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, canUseVoice = () => true, discovery = new EndpointDiscovery(() => config)) {
   if (!['http', 'client_rpc_v1'].includes(config.control_transport || 'http')) throw new Error('invalid_harness_transport')
   if (!compatibleVersion(config.min_version, config.min_version, config.max_version_exclusive)) throw new Error('invalid_plugin_version_policy')
   for (const target of Object.values(config.endpoints)) {
@@ -71,6 +74,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
         front.on('error', () => {})
         const params = new URL(req.url, 'http://localhost').searchParams
         const trace = new DuetTrace({ mode: params.get('mode'), plugin_version: params.get('plugin_version'),
+          host_plugin_version: PLUGIN_VERSION, page_id: (params.get('page_id') || '').slice(0, 64),
           client_trace_id: (params.get('client_trace_id') || '').slice(0, 64),
           backend_origin: new URL(config.endpoints[params.get('mode')] || config.endpoints.online).origin,
           control_transport: config.control_transport }, { ...config.traceOptions, secrets: [config.authorization] })
@@ -78,7 +82,8 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           trace.event('browser.closed', { code, reason: reason.toString() })
           const timer = setTimeout(() => { void trace.close() }, 1500); timer.unref()
         })
-        let back, feedbackTicket = null
+        let back, feedbackTicket = null, connectionRoute, selectedConfig
+        const opening = new AbortController()
         front.once('close', () => feedback?.close(feedbackTicket))
         let state = null
         let initialized = false
@@ -86,6 +91,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
         const fail = code => {
           if (terminal) return
           terminal = true
+          opening.abort()
           trace.event('proxy.failed', { code })
           if (front.readyState === WebSocket.OPEN) front.send(JSON.stringify({ type: 'error', error: { code } }))
           front.close(code === 'capacity_exhausted' ? 1013 : 1008)
@@ -94,6 +100,10 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
         const mode = params.get('mode')
         if (!compatibleVersion(params.get('plugin_version'), config.min_version, config.max_version_exclusive)) { fail('plugin_upgrade_required'); return }
         if (!['online', 'tts_only'].includes(mode)) { fail('invalid_voice_mode'); return }
+        let anonymousUserId
+        try{anonymousUserId=feedback?.user(req)}catch{ /* Identity is optional, not admission. */ }
+        const clientMetadata=sessionMetadata(params,mode,anonymousUserId)
+        trace.event('session.metadata',clientMetadata)
         if (!canUseVoice()) { fail('workspace_required'); return }
         connections.set(front, { mode, ready: false, trace })
         front.on('close', () => connections.delete(front))
@@ -101,18 +111,23 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
         if (!target) { fail('voice_mode_unavailable'); return }
         const clientRPC = mode === 'online' && config.control_transport === 'client_rpc_v1'
         const rpcRequests = new Map()
-        back = new WebSocket(target, { handshakeTimeout: 15000, maxPayload: 16_000_000,
-          ...(config.authorization ? { headers: { Authorization: config.authorization } } : {}),
-        })
         const pending = []
         const startup = setTimeout(() => fail('voice_start_timeout'), 20000)
-        const forward = (data, binary = false) => {
+        let hintReporting=false,hintReported=false
+        const sendUpstream = (data, binary) => {
+          if (!binary) {
+            const message = JSON.parse(data.toString())
+            if (message.type === 'session.update') data = JSON.stringify({...message,
+              client: {...message.client, connection_route: connectionRoute}})
+          }
           trace.frame('upstream.send', data, binary)
-          if (back.readyState === WebSocket.OPEN) back.send(data, { binary })
+          back.send(data, {binary})
+        }
+        const forward = (data, binary = false) => {
+          if (back?.readyState === WebSocket.OPEN) sendUpstream(data, binary)
           else if (pending.length < 8) pending.push([data, binary])
           else fail('voice_not_ready')
         }
-        back.on('open', () => { for (const [data, binary] of pending.splice(0)) back.send(data, { binary }) })
         front.on('message', (raw, binary) => {
           if (terminal) return
           trace.frame('browser.receive', raw, binary)
@@ -124,6 +139,13 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
             }
             const message = JSON.parse(raw.toString())
             if (message.type === 'client.diagnostic') return // captured locally, never fed to model
+            if (message.type === 'client.connection_hint') {
+              if(hintReporting&&!hintReported&&mode==='online'&&connections.get(front)?.ready){
+                hintReported=true
+                forward(JSON.stringify({type:'client.connection_hint',connection_hint:connectionRoute.connection_hint}))
+              }
+              return
+            }
             if (message.type === 'harness.state') {
               if (!message.state || typeof message.state !== 'object' || JSON.stringify(message.state).length > 100_000) throw new Error('invalid_harness_state')
               state = message.state
@@ -135,10 +157,11 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
               if (initialized) throw new Error('voice_mode_requires_reconnect')
               initialized = true
               forward(JSON.stringify({ type: 'session.update',
-                client: { name: 'dsh-duet', version: params.get('plugin_version'), protocol_major: 1 },
+                client: clientMetadata,
                 session: {
                 type: 'realtime', preset_id: 'server_default',
-                ...(mode === 'tts_only' ? { io_mode: 'external_only' } : clientRPC ? { io_mode: 'online', harness: { transport: 'client_rpc_v1' } } : {}),
+                io_mode:mode === 'tts_only'?'external_only':'online',
+                ...(clientRPC ? { harness: { transport: 'client_rpc_v1' } } : {}),
                 audio: { input: { format: { type: 'audio/pcm', rate: 16000 } } },
                 debug: { enabled: false, slot_grid: false },
               } }))
@@ -164,6 +187,16 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
             } else throw new Error('unsupported_voice_event')
           } catch (error) { fail(error.message || 'invalid_voice_event') }
         })
+        void (async () => {
+        const routes = await discovery.plan(mode)
+        const selected = await connectEndpoint(WebSocket, routes, {signal: opening.signal, trace})
+        if (opening.signal.aborted || front.readyState !== WebSocket.OPEN) { selected.socket.close(); return }
+        back = selected.socket
+        if (selected.fallbackReason) discovery.failed()
+        discovery.used(mode, selected.route)
+        connectionRoute = {...discovery.metadata(selected.route, selected.fallbackReason), attempted_endpoint:routes[0].url}
+        selectedConfig = {...selected.route.config, endpoints: {online:selected.route.url,tts_only:selected.route.url}}
+        trace.event('endpoint.selected', connectionRoute)
         back.on('message', (data, binary) => {
           trace.frame('upstream.receive', data, binary)
           if (!binary) {
@@ -174,15 +207,15 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
                 rpcRequests.set(event.request_id, event.connection_id)
               }
               if (event.type === 'session.created') {
+                hintReporting=event.connection_hint_reporting===true
                 if (clientRPC && event.session?.config?.harness_control_transport !== 'client_rpc_v1') { fail('harness_rpc_backend_upgrade_required'); return }
                 if (mode === 'tts_only' && event.session?.config?.external_message_protocol !== 'harness_result_v2') { fail('harness_result_backend_upgrade_required'); return }
                 const connection = connections.get(front)
                 if (connection) connection.ready = true
                 clearTimeout(startup)
-                if(!feedbackTicket)feedbackTicket=feedback?.open(req,event.session?.id,mode)
-                if(feedbackTicket){
-                  data=JSON.stringify({...event,feedback_session_ticket:feedbackTicket})
-                }
+                if(!feedbackTicket)feedbackTicket=feedback?.open(req,event.session?.id,mode,selectedConfig)
+                data=JSON.stringify({...event, connection_route: connectionRoute,
+                  ...(feedbackTicket?{feedback_session_ticket:feedbackTicket}:{})})
               }
             } catch { /* Upstream framing is passed through. */ }
           }
@@ -200,11 +233,15 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           if (code === 1013) fail('capacity_exhausted')
           else front.close(code === 1000 ? 1000 : 1011)
         })
-        front.on('error', error => { trace.event('browser.error', { message: error.message }); back.close() })
+        for (const [data, binary] of pending.splice(0)) sendUpstream(data, binary)
+        })().catch(error => {
+          if (!opening.signal.aborted) fail([429,503].includes(error.status)?'capacity_exhausted':error.status===426?'plugin_upgrade_required':'voice_upstream_unavailable')
+        })
+        front.on('error', error => { trace.event('browser.error', { message: error.message }); opening.abort(); back?.close() })
         front.on('close', (code, reason) => {
           trace.event('rpc.pending_at_close', { request_ids: [...rpcRequests.keys()] })
-          clearTimeout(startup); back.close()
-          const timer = setTimeout(() => back.terminate(), 1000)
+          opening.abort(); clearTimeout(startup); back?.close()
+          const timer = setTimeout(() => back?.terminate(), 1000)
           timer.unref()
         })
       })

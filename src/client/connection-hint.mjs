@@ -1,12 +1,14 @@
 /** A brief, non-modal invitation after the microphone is actually ready. */
-export function mountConnectionHint(controls, { duration = 8000 } = {}) {
+import {normalizeGuidance} from '../shared/connection-guidance.mjs?v=0.1.4'
+export function mountConnectionHint(controls, { duration = 8000, onShown = ()=>{} } = {}) {
   const hint = document.createElement('div')
   hint.dataset.duetConnectionHint = ''
   hint.setAttribute('role', 'status')
   hint.setAttribute('aria-live', 'polite')
   hint.hidden = true
   hint.style.cssText = 'position:fixed;z-index:100020;box-sizing:border-box;width:268px;max-width:calc(100vw - 32px);padding:12px 15px;border:1px solid #a5d8f4;border-radius:12px;background:#eff9ff;color:#163c56;font:13px/1.65 system-ui,sans-serif;box-shadow:0 8px 28px #153e6524;pointer-events:none'
-  hint.textContent = '连接成功，可以试试对我说“你好”。'
+  const text=document.createTextNode(normalizeGuidance(null).text)
+  hint.append(text)
   const arrow = document.createElement('span')
   arrow.setAttribute('aria-hidden', 'true')
   arrow.style.cssText = 'position:absolute;bottom:-6px;width:10px;height:10px;transform:rotate(45deg);background:#eff9ff;border-right:1px solid #a5d8f4;border-bottom:1px solid #a5d8f4'
@@ -38,15 +40,18 @@ export function mountConnectionHint(controls, { duration = 8000 } = {}) {
   observer.observe(controls)
   return {
     dismiss: hide,
-    update({ mode, ready, teaching = false }) {
+    update({ mode, ready, teaching = false, guidance }) {
       if (disposed) return
       const active = mode === 'online' && ready
       if (!active || teaching) hide()
       if (active && !wasReady && !teaching) {
+        const actual=normalizeGuidance(guidance)
+        text.textContent=actual.text
         hint.hidden = false
         position()
         clearTimeout(timer)
         timer = setTimeout(hide, duration)
+        try{onShown(actual)}catch{ /* Diagnostics must never break the tooltip. */ }
       }
       wasReady = active
     },

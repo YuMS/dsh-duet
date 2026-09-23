@@ -12,10 +12,10 @@ export class ServiceNotices {
     if (this.cached && Date.now() < this.cached.expires) return this.cached.value
     if (this.inflight) return this.inflight
     const epoch = this.epoch
-    const config = this.getConfig()
     const work = async () => {
       let value
       try {
+        const config = await this.getConfig()
         const url = new URL(config.endpoints.online)
         url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:'
         url.pathname = url.pathname.replace(/\/ws\/?$/, '').replace(/\/$/, '') + '/announcements'

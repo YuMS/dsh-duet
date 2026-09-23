@@ -1,11 +1,22 @@
 /** Host-only endpoint settings; trial authentication comes from the package. */
 import { readFileSync } from 'node:fs'
 import { mkdir, writeFile, rename, unlink } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
+import { dirname } from 'node:path'
+import { defaultStateFile } from './storage-paths.mjs'
 import { randomUUID } from 'node:crypto'
 import { duetEnv } from './environment.mjs'
-import { publicServiceAuthorization } from './service-defaults.mjs'
+import { publicServiceAuthorization, isPublicTrialEndpoint } from './service-defaults.mjs'
+
+export function normalizeBackendURL(value) {
+  if (typeof value !== 'string' || value.length > 2048) throw new Error('invalid_backend_url')
+  const url = new URL(value.trim())
+  const baseAddress = url.pathname === '/'
+  if (url.protocol === 'http:') url.protocol = 'ws:'
+  else if (url.protocol === 'https:') url.protocol = 'wss:'
+  if (url.pathname === '/') url.pathname = '/ws'
+  if (baseAddress && !url.searchParams.has('protocol')) url.searchParams.set('protocol', 'realtime_v2')
+  return url.toString()
+}
 
 export function validateBackendURL(value, insecureOrigin = null) {
   if (typeof value !== 'string' || value.length > 2048) throw new Error('invalid_backend_url')
@@ -13,14 +24,14 @@ export function validateBackendURL(value, insecureOrigin = null) {
   if (!['ws:', 'wss:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error('invalid_backend_url')
   // Credentials never belong in URLs or logs.
   if ([...url.searchParams.keys()].some(k => k !== 'protocol')) throw new Error('backend_url_query_not_allowed')
-  if (url.protocol === 'ws:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && url.origin !== insecureOrigin) throw new Error('backend_requires_wss')
+  if (url.protocol === 'ws:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && url.origin !== insecureOrigin && !isPublicTrialEndpoint(url.toString())) throw new Error('backend_requires_wss')
   return url.toString()
 }
 
 export class DuetSettings {
   constructor(base, { path, debug = false } = {}) {
     this.base = base
-    this.path = path || duetEnv('SETTINGS_FILE') || join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'duplex-control', 'voice.json')
+    this.path = path || duetEnv('SETTINGS_FILE') || defaultStateFile('voice.json')
     this.debug = debug
     this.saved = null
     this.revision = 0
@@ -66,8 +77,9 @@ export class DuetSettings {
     if (this.writing) throw new Error('settings_write_in_progress')
     if (!input || input.revision !== this.revision) throw new Error('settings_revision_conflict')
     // A deliberate, authenticated per-origin opt-in, never a global TLS bypass.
-    const insecureOrigin = input.allow_insecure_http === true ? new URL(input.backend_url).origin : this.saved?.insecure_origin
-    const url = validateBackendURL(input.backend_url, insecureOrigin)
+    const normalized = normalizeBackendURL(input.backend_url)
+    const insecureOrigin = input.allow_insecure_http === true ? new URL(normalized).origin : this.saved?.insecure_origin
+    const url = validateBackendURL(normalized, insecureOrigin)
     const next = this.validate({ backend_url: url, insecure_origin: insecureOrigin })
     this.writing = true
     const temp = `${this.path}.${randomUUID()}.tmp`

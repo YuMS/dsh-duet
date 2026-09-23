@@ -47,7 +47,7 @@ function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRe
       },
     },
   }
-  apply(ctx, {feedbackDisabled:!options.feedbackStore,...options})
+  apply(ctx, {feedbackDisabled:!options.feedbackStore,endpointDiscoveryOptions:{cachePath:null,fetchImpl:async()=>new Response('',{status:404})},...options})
 
   const request = (method, url, body, headers = {}) => new Promise((resolve, reject) => {
     const encoded = body === undefined ? null : Buffer.from(JSON.stringify(body))
@@ -228,6 +228,45 @@ async function completeComposerRequest(request, candidate, composer) {
   )
   assert.equal(completed.status, 200)
 }
+
+test('bound composer requests cannot be listed, claimed or completed by another page', async () => {
+  const { request, prompted } = makeHarness()
+  const owner = { 'x-duet-browser-client': 'page-a-connection-1' }
+  const pending = request('POST', '/duplex-control/api/sessions/s1/composer/submit', {
+    expected_revision: 6, expected_hash: sha256('正确页面的草稿'),
+  }, owner)
+  let candidate
+  for (let i = 0; i < 100 && !candidate; i++) {
+    candidate = (await request('GET', '/duplex-control/api/composer/requests?client_id=page-a-connection-1')).body.requests[0]
+    if (!candidate) await new Promise(resolve => setTimeout(resolve, 1))
+  }
+  assert.ok(candidate)
+  assert.equal(candidate.target_client_id, 'page-a-connection-1')
+  assert.equal(candidate.require_focus, true)
+  for (const id of ['page-b', 'page-a-connection-2', '']) {
+    assert.deepEqual((await request('GET', '/duplex-control/api/composer/requests?client_id='+id)).body.requests, [])
+  }
+  const route = `/duplex-control/api/composer/requests/${candidate.id}`
+  assert.equal((await request('POST', route+'/claim', {client_id:'page-b'})).status, 409)
+  assert.equal((await request('POST', route+'/claim', {client_id:'page-a-connection-1'})).status, 200)
+  assert.equal((await request('POST', route+'/complete', {client_id:'page-b',ok:true,composer:{}})).status, 409)
+  await request('POST', route+'/complete', {client_id:'page-a-connection-1',ok:true,composer:{
+    session_id:'s1',consumed_text:'正确页面的草稿',consumed_revision:6,consumed_hash:sha256('正确页面的草稿'),
+    text:'',revision:7,hash:sha256(''),phase:'plain',
+  }})
+  assert.equal((await pending).status,202)
+  assert.equal(prompted.length,1)
+  assert.equal(prompted[0].content[0].text,'正确页面的草稿')
+})
+
+test('page-bound activation and fork do not broadcast a host focus change', async () => {
+  const {request}=makeHarness(), owner={'x-duet-browser-client':'page-a'}
+  await request('GET','/duplex-control/api/sessions')
+  const before=(await request('GET','/duplex-control/api/focus')).body
+  assert.equal((await request('POST','/duplex-control/api/sessions/s1/activate',{},owner)).status,200)
+  assert.equal((await request('POST','/duplex-control/api/sessions/s1/fork',{},owner)).status,201)
+  assert.deepEqual((await request('GET','/duplex-control/api/focus')).body,before)
+})
 
 test('background browser long poll is live and wakes for composer RPC without interval polling', async () => {
   const { request } = makeHarness()

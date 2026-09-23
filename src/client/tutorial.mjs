@@ -1,5 +1,5 @@
 /** Opt-in walkthrough. All writes are limited to sessions created by this run. */
-import {consumeTutorialRequest} from './tutorial-request.mjs?v=0.1.3'
+import {consumeTutorialRequest} from './tutorial-request.mjs?v=0.1.4'
 export const TUTORIAL_KEY = 'dsh-duplex-tutorial-v1'
 export const QUESTION = '什么是语音交互？请用一句话简单解释，不使用工具。'
 export const INPUT = '用一句话介绍语音助手。'

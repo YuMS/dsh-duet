@@ -8,7 +8,7 @@ function fixture() {
   const input={state:{getSnapshot:()=>snapshot},setDraft:text=>{snapshot.draft=text;snapshot.draftRev++;calls.push(['draft',text])}}
   const ctx={sessions:{list:{getSnapshot:()=>({current})},scope:id=>({id})},conversation:{input:{for:()=>input}}}
   const state={mode:'off',setMode:async mode=>{state.mode=mode;calls.push(['mode',mode])}}
-  return {a:tutorialAdapter(ctx,state,{},()=>{}),snapshot,calls,focus:id=>{current=id},signal:new AbortController().signal}
+  return {a:tutorialAdapter(ctx,state,{},()=>{},()=>()=>{}),snapshot,calls,focus:id=>{current=id},signal:new AbortController().signal}
 }
 test('direct editor adapter preserves unrelated edits and attachments',async()=>{
   const f=fixture();await f.a.write('tutorial','hello','',f.signal);assert.equal(f.snapshot.draft,'hello')

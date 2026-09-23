@@ -1,14 +1,14 @@
 /** Submit feedback with a stable, locally managed user identity. */
 import {createHmac,randomBytes,timingSafeEqual} from 'node:crypto'
 import {existsSync,mkdirSync,readFileSync,openSync,writeFileSync,fsyncSync,closeSync,linkSync,unlinkSync} from 'node:fs'
-import {dirname,join} from 'node:path'
-import {homedir} from 'node:os'
+import {dirname} from 'node:path'
+import {defaultStateFile} from './storage-paths.mjs'
 
 const COOKIE='duplex_feedback_user'
 export class RemoteFeedback {
   constructor(getConfig,{keyPath,fetchImpl=fetch}={}){
     this.getConfig=getConfig;this.fetch=fetchImpl
-    this.keyPath=keyPath||join(process.env.DSH_HOME||join(homedir(),'.dsh'),'duplex-control','feedback-identity.key')
+    this.keyPath=keyPath||defaultStateFile('feedback-identity.key')
     this.key=null
   }
   identityKey(){
@@ -40,8 +40,8 @@ export class RemoteFeedback {
     res.setHeader('Set-Cookie',`${COOKIE}=${signed}; Path=/duplex-control; HttpOnly; SameSite=Strict; Max-Age=31536000${secure?'; Secure':''}`)
     return 'anon_'+id
   }
-  async insert(record){
-    const config=this.getConfig(),url=new URL(config.endpoints.online)
+  async insert(record,{config:connectionConfig}={}){
+    const config=connectionConfig||await this.getConfig(),url=new URL(config.endpoints.online)
     url.protocol=url.protocol==='wss:'?'https:':'http:'
     url.pathname=url.pathname.replace(/\/ws\/?$/,'').replace(/\/$/,'')+'/feedback';url.search=''
     const response=await this.fetch(url,{method:'POST',redirect:'error',signal:AbortSignal.timeout(10000),

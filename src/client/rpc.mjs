@@ -20,13 +20,14 @@ export function validateRPC(request) {
 }
 
 export class HarnessRPCExecutor {
-  constructor(send, fetchImpl = fetch, diagnostic = () => {}, localComposer = null, catalogOrder = rows => orderSessionCatalog(rows, readWorkspaceView())) {
+  constructor(send, fetchImpl = fetch, diagnostic = () => {}, localComposer = null, catalogOrder = rows => orderSessionCatalog(rows, readWorkspaceView()), binding = {}) {
     // Native Window.fetch rejects an RPCExecutor receiver (Illegal invocation).
     // Call the captured function plainly, not as an instance method.
     this.send = send; this.fetch = (...args) => fetchImpl(...args); this.closed = false
     this.diagnostic = diagnostic
     this.localComposer = localComposer
     this.catalogOrder = catalogOrder
+    this.binding = binding
     this.connectionId = null; this.seen = new Map(); this.retired = new Set(); this.controllers = new Set()
   }
 
@@ -75,13 +76,16 @@ export class HarnessRPCExecutor {
         method: request.method, credentials: 'same-origin', redirect: 'error',
         cache: 'no-store', signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'X-Duplex-Control-Client': 'realtime-client-rpc-v1',
-          'X-Duet-Native-Interactions': '1' },
+          'X-Duet-Native-Interactions': '1',
+          ...(this.binding.id ? { 'X-Duet-Browser-Client': this.binding.id } : {}) },
         ...(request.method !== 'GET' ? { body: JSON.stringify(request.payload ?? {}) } : {}),
       })
       const text = await response.text()
       if (new TextEncoder().encode(text).length > MAX_BYTES - 512) throw new Error('harness_rpc_response_too_large')
       const body = JSON.parse(text)
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_harness_rpc_body')
+      controller.signal.throwIfAborted()
+      if (response.ok && this.binding.completed) await this.binding.completed(request, body, controller.signal)
       if (response.status === 200 && request.path === '/api/sessions' && Array.isArray(body.sessions)) {
         // Both startup prompt and nth_N resolution read this same browser-local
         // order, including manual drag order; archived rows cannot consume ranks.

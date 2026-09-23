@@ -1,8 +1,9 @@
 /** DSH browser services plus existing voice connection; never opens a microphone. */
-import { PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.3'
-import { focusedSession } from './composer.mjs?v=0.1.3'
-import { requireWorkspace, workspaceIssue } from './workspaces.mjs?v=0.1.3'
-export function tutorialAdapter(ctx, state, audio, pollReady) {
+import { PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.4'
+import { focusedSession } from './composer.mjs?v=0.1.4'
+import { requireWorkspace, workspaceIssue } from './workspaces.mjs?v=0.1.4'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.1.4'
+export function tutorialAdapter(ctx, state, audio, pollReady, startBridge = startComposerBridge) {
   let narration
   const completed = new Map()
   const check = signal => signal.throwIfAborted()
@@ -17,10 +18,10 @@ export function tutorialAdapter(ctx, state, audio, pollReady) {
     while(Date.now()<deadline){check(signal);if(await fn())return;await wait(150,signal)}
     throw Error('等待超时，教学已停止；不会自动重新发送')
   }
-  const api = async (path, signal, method='GET', body) => {
+  const api = async (path, signal, method='GET', body, owner) => {
     check(signal)
     const r=await fetch('/duplex-control/api/'+path,{method,signal,cache:'no-store',credentials:'same-origin',
-      headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})})
+      headers:{'Content-Type':'application/json', 'X-Duet-Browser-Client': owner || 'tutorial-local'},...(body?{body:JSON.stringify(body)}:{})})
     const d=await r.json();check(signal)
     if(!r.ok)throw Error(d.detail||d.error_code||'DSH 请求失败')
     return d
@@ -57,12 +58,16 @@ export function tutorialAdapter(ctx, state, audio, pollReady) {
     async write(id,text,expected,signal){check(signal);safeSnapshot(id,expected);input(id).setDraft(text)},
     async submit(id,expected,signal){
       safeSnapshot(id,expected)
-      const {composer}=await api(`sessions/${encodeURIComponent(id)}/composer?require_focus=true`,signal)
-      safeSnapshot(id,expected)
-      if(composer.text!==expected)throw Error('教学草稿不一致，未发送')
-      const {job}=await api(`sessions/${encodeURIComponent(id)}/composer/submit`,signal,'POST',{
-        expected_revision:composer.revision,expected_hash:composer.hash,
-      });return job
+      const owner = crypto.randomUUID()
+      const stop = startBridge(ctx, owner)
+      try {
+        const {composer}=await api(`sessions/${encodeURIComponent(id)}/composer?require_focus=true`,signal,'GET',undefined,owner)
+        safeSnapshot(id,expected)
+        if(composer.text!==expected)throw Error('教学草稿不一致，未发送')
+        const {job}=await api(`sessions/${encodeURIComponent(id)}/composer/submit`,signal,'POST',{
+          expected_revision:composer.revision,expected_hash:composer.hash,
+        },owner);return job
+      } finally { stop() }
     },
     async enableBroadcast(signal){
       await pollReady(signal);check(signal)

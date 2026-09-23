@@ -10,6 +10,22 @@ export function focusedSession(ctx) {
   return selected.length === 1 ? selected[0][0] : null
 }
 
+/** Navigation is local to the page owning this connection, never a host broadcast. */
+export async function openLocalSession(ctx, id, signal) {
+  signal?.throwIfAborted()
+  await ctx.sessions.refresh()
+  signal?.throwIfAborted()
+  const navigation = typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : ctx.uiWorkspace
+  if (navigation?.openSession) navigation.openSession(id)
+  else ctx.sessions.open(id)
+  const deadline = Date.now() + 3000
+  while (focusedSession(ctx) !== id) {
+    signal?.throwIfAborted()
+    if (Date.now() > deadline) fail('focus_not_ready')
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+}
+
 export function composerAccess(ctx, label = id => id) {
   const focused = () => focusedSession(ctx)
   const inputFor = id => {
@@ -42,6 +58,13 @@ export function composerAccess(ctx, label = id => id) {
       return { composer: value }
     }
     const match = request.path.match(/^\/api\/sessions\/([A-Za-z0-9_-]+)\/composer$/)
+    if (request.method === 'GET' && match) {
+      const id = match[1]
+      const value = await snapshot(id, inputFor(id))
+      signal?.throwIfAborted()
+      if (request.params?.require_focus === 'true' && focused() !== id) fail('focus_conflict')
+      return { composer: value }
+    }
     if (request.method !== 'PUT' || !match) return undefined
     const id = match[1], payload = request.payload || {}, input = inputFor(id)
     const overwrite = payload.overwrite === true

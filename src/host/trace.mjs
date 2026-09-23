@@ -1,6 +1,6 @@
 /** Private, append-only connection capture. Never served as a web asset. */
 import { createWriteStream, mkdirSync, readdirSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { duetHome } from './storage-paths.mjs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { duetEnv } from './environment.mjs'
@@ -19,7 +19,7 @@ export function redact(value, secrets = []) {
 
 const budgets = new Map()
 export class DuetTrace {
-  constructor(metadata, { root = duetEnv('TRACE_DIR') || join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'duplex-control', 'traces'),
+  constructor(metadata, { root = duetEnv('TRACE_DIR') || join(duetHome(), 'traces'),
     secrets = [], maxBytes = 512 * 1024 ** 2, totalBytes = 20 * 1024 ** 3, queueBytes = 8 * 1024 ** 2 } = {}) {
     this.id = randomUUID(); this.start = performance.now(); this.seq = 0; this.bytes = 0
     this.offset = 0; this.closed = false; this.error = null; this.secrets = secrets
