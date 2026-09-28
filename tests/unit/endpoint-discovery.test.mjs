@@ -12,6 +12,54 @@ import {DEFAULT_DUET_URL} from '../../src/host/service-defaults.mjs'
 const config={endpoints:{online:DEFAULT_DUET_URL,tts_only:DEFAULT_DUET_URL},authorization:'fixture'}
 const response=(endpoint='47.117.104.188')=>new Response(JSON.stringify({schema_version:1,recommended_endpoint:endpoint,ttl_seconds:60,default_endpoint:'ws://evil.example/ws'}))
 
+test('recommendations preserve explicit HTTPS/WSS and keep bare-address compatibility',async()=>{
+  const resolve=async()=>[{address:'192.0.2.10',family:4}]
+  for(const [input,expected] of [
+    ['47.117.104.188','ws://47.117.104.188/ws?protocol=realtime_v2'],
+    ['voice.example.com','ws://voice.example.com/ws?protocol=realtime_v2'],
+    ['http://voice.example.com','ws://voice.example.com/ws?protocol=realtime_v2'],
+    ['ws://voice.example.com/ws','ws://voice.example.com/ws?protocol=realtime_v2'],
+    ['https://voice.example.com/','wss://voice.example.com/ws?protocol=realtime_v2'],
+    ['wss://voice.example.com/ws?protocol=realtime_v2','wss://voice.example.com/ws?protocol=realtime_v2'],
+    ['https://47.117.104.188','wss://47.117.104.188/ws?protocol=realtime_v2'],
+  ])assert.equal((await recommendedEndpoint(input,resolve)).url,expected)
+  for(const scheme of ['https','wss'])assert.equal(endpointHTTP(`${scheme}://voice.example.com/ws?protocol=realtime_v2`,'/api/service-info'),
+    'https://voice.example.com/api/service-info')
+  assert.throws(()=>endpointHTTP('file:///ws','/api/service-info'),/invalid_endpoint_protocol/)
+})
+
+test('secure discovery survives restart and is used by both modes, metadata and route reports',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'duet-secure-discovery-')),cachePath=join(dir,'cache.json')
+  const secure='wss://voice.example.com/ws?protocol=realtime_v2'
+  const calls=[]
+  try{
+    const first=new EndpointDiscovery(()=>config,{cachePath,resolve:async()=>[{address:'192.0.2.10',family:4}],
+      fetchImpl:async()=>response('https://voice.example.com')})
+    await first.refreshIfDue()
+    const restored=new EndpointDiscovery(()=>config,{cachePath,fetchImpl:async(url)=>{
+      calls.push(String(url));return new Response('{}')
+    }})
+    for(const mode of ['online','tts_only']){
+      const routes=await restored.plan(mode)
+      assert.equal(routes[0].url,secure);assert.equal(routes[1].url,DEFAULT_DUET_URL)
+      const attempts=[]
+      const selected=await connectEndpoint(socketClass({[secure]:true},attempts),routes)
+      assert.deepEqual(attempts,[secure])
+      restored.used(mode,selected.route)
+      assert.equal(restored.metadata(selected.route).selected_endpoint,secure)
+      const effective=await restored.effective(mode)
+      assert.equal(effective.endpoints[mode],secure)
+      await restored.fetch(endpointHTTP(effective.endpoints[mode],'/api/service-info'))
+    }
+    assert.deepEqual(calls,Array(2).fill('https://voice.example.com/api/service-info'))
+    const attempts=[]
+    const fallback=await connectEndpoint(socketClass({[DEFAULT_DUET_URL]:true},attempts),await restored.plan('online'))
+    assert.deepEqual(attempts,[secure,DEFAULT_DUET_URL])
+    assert.equal(restored.metadata(fallback.route,fallback.fallbackReason).selection,'fallback')
+    assert.equal(restored.metadata(fallback.route,fallback.fallbackReason).selected_endpoint,DEFAULT_DUET_URL)
+  }finally{rmSync(dir,{recursive:true,force:true})}
+})
+
 test('fixed bootstrap discovers recommendation, caches it, and never replaces the fallback',async()=>{
   let calls=0
   const discovery=new EndpointDiscovery(()=>config,{fetchImpl:async(url,options)=>{

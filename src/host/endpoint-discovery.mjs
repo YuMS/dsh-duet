@@ -11,7 +11,8 @@ import {DEFAULT_DUET_URL, PUBLIC_TRIAL_AUTHORIZATION, isPublicTrialEndpoint} fro
 
 export function endpointHTTP(endpoint, path) {
   const url=new URL(endpoint)
-  url.protocol=url.protocol==='wss:'?'https:':'http:'
+  if(!['http:','https:','ws:','wss:'].includes(url.protocol))throw Error('invalid_endpoint_protocol')
+  url.protocol=['wss:','https:'].includes(url.protocol)?'https:':'http:'
   url.pathname=url.pathname.replace(/\/ws\/?$/,'').replace(/\/$/,'')+path
   url.search=''
   return url.toString()

@@ -1,18 +1,19 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.4'
-import { DuetAudio } from './audio.mjs?v=0.1.4'
-import { HarnessRPCExecutor } from './rpc.mjs?v=0.1.4'
-import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.4'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.1.4'
-import { mountTutorial } from './tutorial.mjs?v=0.1.4'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.4'
-import { mountRating } from './feedback.mjs?v=0.1.4'
-import { createAudioUploadConsent } from './consent.mjs?v=0.1.4'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.4'
-import { nativeInteractions } from './interactions.mjs?v=0.1.4'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.1.4'
-import { mountControlsLayout } from './controls-layout.mjs?v=0.1.4'
-import { mountNotice } from './notice.mjs?v=0.1.4'
-import { workspaceIssue, requireWorkspace, browserSessionCatalog } from './workspaces.mjs?v=0.1.4'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.5'
+import { DuetAudio } from './audio.mjs?v=0.1.5'
+import { HarnessRPCExecutor } from './rpc.mjs?v=0.1.5'
+import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.5'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.1.5'
+import { mountTutorial } from './tutorial.mjs?v=0.1.5'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.5'
+import { mountRating } from './feedback.mjs?v=0.1.5'
+import { createAudioUploadConsent } from './consent.mjs?v=0.1.5'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.5'
+import { nativeInteractions } from './interactions.mjs?v=0.1.5'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.1.5'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.1.5'
+import { mountNotice } from './notice.mjs?v=0.1.5'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog } from './workspaces.mjs?v=0.1.5'
+import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.5'
 
 export function mountDuet(ctx) {
   const pageId = crypto.randomUUID()
@@ -24,7 +25,7 @@ export function mountDuet(ctx) {
   const labels = new Map()
   let clientTraceId = null, diagnosticCount = 0
   let connectionGuidance = null, reportHintShown = null
-  let tutorial, teaching, ratingPanel, connectionHint, stopControlsLayout
+  let tutorial, teaching, ratingPanel, connectionHint, stopControlsLayout, stopSettings
   const diagnostic = data => {
     if (++diagnosticCount > 100) return
     const bounded = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 4000) : v]))
@@ -132,8 +133,7 @@ export function mountDuet(ctx) {
       if(closed)return
       if (mode === 'online') stopBridge = startComposerBridge(ctx, connectionTraceId)
       report({ event: 'browser.connection_start', page_binding: 'connection_owner_v1' })
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      ws = new WebSocket(`${protocol}//${location.host}/duplex-control/voice/ws?mode=${mode}&plugin_version=${PLUGIN_VERSION}&client_trace_id=${connectionTraceId}&page_id=${pageId}`)
+      ws = new WebSocket(voiceSocketUrl({ mode, plugin_version: PLUGIN_VERSION, client_trace_id: connectionTraceId, page_id: pageId }))
       ws.onopen = () => {
         send({ type: 'session.update' })
         if (mode === 'online') stopComposer = observeComposer(ctx, composer, send)
@@ -282,6 +282,8 @@ export function mountDuet(ctx) {
     settings.href = '/duet/'
     settings.target = '_blank'
     settings.rel = 'noopener noreferrer'
+    stopSettings?.()
+    stopSettings = bindSettingsLink(settings)
     settings.title = 'duet 设置'
     settings.setAttribute('aria-label', 'duet 设置')
     settings.style.cssText = 'display:flex;color:inherit;padding:5px;border-radius:6px'
@@ -390,6 +392,7 @@ export function mountDuet(ctx) {
     connectionHint?.dispose()
     clearInterval(timer); clearInterval(progress)
     stopControlsLayout?.()
+    stopSettings?.()
     document.removeEventListener('visibilitychange', visibility)
     window.removeEventListener('error', pageError)
     window.removeEventListener('unhandledrejection', pageError)

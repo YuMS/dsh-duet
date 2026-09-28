@@ -12,6 +12,7 @@ const modules = {
   controls_layout: 'client/controls-layout',
   notice: 'client/notice',
   workspaces: 'client/workspaces',
+  transport: 'client/transport',
 }
 const aliases = {
   state: 'DuetState as VoiceState', audio: 'DuetAudio as VoiceAudio',

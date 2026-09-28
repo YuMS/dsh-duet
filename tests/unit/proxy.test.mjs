@@ -116,7 +116,7 @@ test('no workspace blocks both modes before any upstream connection', async t =>
   assert.equal(f.connections.length, 1)
   ws.close(); await once(ws, 'close')
 })
-test('session rating ticket is minted from upstream identity and marked closed by proxy',async t=>{
+test('session rating ticket is minted from upstream identity and marked closed by proxy',{timeout:5000},async t=>{
   const anonymousId='anon_'+'a'.repeat(32)
   const feedback=new FeedbackService({userId:()=> anonymousId,insert:async()=>{}})
   const f=await fixture(t,null,{feedback})
@@ -128,8 +128,10 @@ test('session rating ticket is minted from upstream identity and marked closed b
   const metadata=f.messages.filter(message=>message.type==='session.update').at(-1).client
   assert.equal(metadata.anonymous_user_id,row.user)
   assert.equal(metadata.identity_kind,'anonymous_browser')
-  ws.close();await once(ws,'close')
-  await new Promise(resolve=>setImmediate(resolve))
+  // Client-side close may precede the proxy's close handler on macOS.
+  // The proxy closes upstream after recording feedback closure.
+  const upstreamClosed=once(f.connections.at(-1),'close')
+  ws.close();await Promise.all([once(ws,'close'),upstreamClosed])
   assert.equal(row.closed,true)
   }
 })

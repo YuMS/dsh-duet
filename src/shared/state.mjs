@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.1.4'
+export const PLUGIN_VERSION = '0.1.5'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
@@ -63,6 +63,8 @@ export class DuetState {
     this.changed(this)
     await this.retiring
     if (generation !== this.generation || this.mode === 'off' || this.suspended) return
+    // Remind on every new connection, while deduplicating its compatibility events.
+    this.recommendationShown = null
     try {
       this.connection = this.connect(this.mode, event => {
         if (generation !== this.generation) return

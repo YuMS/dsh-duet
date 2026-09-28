@@ -26,7 +26,7 @@ test('old server error works and untrusted version text is never rendered', () =
   assert.ok(!compatibilityNotice('plugin_upgrade_required', { policy: { min_client_version: '<script>bad</script>' } }).includes('<script>'))
 })
 
-test('recommendation is nonblocking and appears once', async () => {
+test('recommendation is nonblocking and appears once per connection', async () => {
   const notices = []
   const state = new DuetState({ notice: (...v) => notices.push(v), connect: () => ({ close() {}, sendState() {} }) })
   await state.setMode('tts_only')
@@ -35,5 +35,42 @@ test('recommendation is nonblocking and appears once', async () => {
   assert.equal(state.mode, 'tts_only')
   state.receive({ type: 'compatibility', compatibility: { recommended_client_version: '0.0.99' } })
   assert.equal(notices.length, 1)
+  await state.dispose()
+})
+
+test('recommendation returns after reopening, switching modes, or reconnecting', async () => {
+  const notices = [], connections = []
+  const state = new DuetState({ notice: (...v) => notices.push(v), connect: (mode, receive) => {
+    const connection = { mode, receive, close() {}, sendState() {} }
+    connections.push(connection)
+    return connection
+  } })
+  const compatibility = { type: 'compatibility', compatibility: { recommended_client_version: '0.9.99' } }
+  const check = count => {
+    const current = connections.at(-1)
+    current.receive(compatibility)
+    current.receive(compatibility)
+    current.receive({ type: 'ready' })
+    assert.equal(notices.length, count)
+    assert.equal(state.ready, true)
+    assert.equal(state.connection, current)
+    assert.equal(state.mode, current.mode)
+    assert.equal(notices.at(-1)[1].upgrade, true)
+  }
+  await state.setMode('tts_only')
+  check(1)
+  await state.setMode('off')
+  await state.setMode('tts_only')
+  // Late events from the previous connection must not consume the new reminder.
+  connections[0].receive(compatibility)
+  assert.equal(notices.length, 1)
+  check(2)
+  await state.setMode('online')
+  check(3)
+  await state.replaceConnection()
+  check(4)
+  await state.setMode('online')
+  assert.equal(connections.length, 4)
+  assert.equal(notices.length, 4)
   await state.dispose()
 })
