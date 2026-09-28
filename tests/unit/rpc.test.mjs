@@ -1,9 +1,83 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { HarnessRPCExecutor, validateRPC } from '../../src/client/rpc.mjs'
+import { HarnessRPCExecutor, validateRPC, rpcNavigationSession } from '../../src/client/rpc.mjs'
+import { sessionCreationPayload } from '../../src/client/workspaces.mjs'
 
 const message = extra => ({ type: 'harness.rpc.request', connection_id: 'a'.repeat(32),
   request_id: 'b'.repeat(32), method: 'GET', path: '/api/sessions', ...extra })
+
+test('creation follows page workspace at command time, rejects missing selection, and ignores remote cwd', async () => {
+  let current = 's2'
+  const ctx = { sessions: { list: { getSnapshot: () => ({current}) } },
+    workspaces: { list: { getSnapshot: () => ({ phase: 'ready', items: [
+      { workspaceId: 'ws1', sessionIds: ['s1'] }, { workspaceId: 'ws2', sessionIds: ['s2'] },
+    ] }) } } }
+  const sent = [], replies = []
+  const rpc = new HarnessRPCExecutor(r => replies.push(r), async (_url, options) => {
+    sent.push(JSON.parse(options.body))
+    return new Response('{"session":{"session_id":"new"}}', {status: 201})
+  }, undefined, null, undefined, { creationPayload: p => sessionCreationPayload(ctx, p) })
+  const request = message({ method: 'POST', payload: { name: '新会话', cwd: '/wrong', workspace_id: 'wrong' } })
+  await rpc.execute(request)
+  current = 's1'
+  await rpc.execute(request) // duplicate must not create again in another workspace
+  await rpc.execute({...request, request_id: 'c'.repeat(32)})
+  current = null
+  await rpc.execute({...request, request_id: 'd'.repeat(32)})
+  assert.deepEqual(sent, [{ name: '新会话', workspace_id: 'ws2' }, { name: '新会话', workspace_id: 'ws1' }])
+  assert.equal(replies.at(-1).body.error_code, 'workspace_selection_required')
+  rpc.close()
+})
+
+test('catalog advertises browser RPC creation support without changing sessions', async () => {
+  const replies = []
+  const rpc = new HarnessRPCExecutor(r => replies.push(r), async () =>
+    new Response(JSON.stringify({sessions: [{session_id:'a',label:'A'}]})), undefined, null, rows => rows)
+  await rpc.execute(message())
+  assert.deepEqual(replies[0].body.duet_rpc_capabilities, ['create_session_v1'])
+  assert.equal(replies[0].body.sessions[0].label, 'A')
+  rpc.close()
+})
+
+test('create session executes once and navigates before returning its 201 response', async () => {
+  const order = [], replies = []
+  const payload = { name: '灵感笔记' }
+  const rpc = new HarnessRPCExecutor(reply => { replies.push(reply); order.push('reply') }, async (url, options) => {
+    assert.equal(url, '/duplex-control/api/sessions')
+    assert.equal(options.method, 'POST')
+    assert.equal(options.headers['X-Duet-Browser-Client'], 'owner-a')
+    assert.deepEqual(JSON.parse(options.body), payload)
+    order.push('create')
+    return new Response(JSON.stringify({ session: { session_id: 'new-session', label: payload.name } }), { status: 201 })
+  }, undefined, null, undefined, { id: 'owner-a', completed: async (request, body) => {
+    assert.equal(rpcNavigationSession(request, body), 'new-session')
+    order.push('navigate')
+  } })
+  const request = message({ method: 'POST', payload })
+  await Promise.all([rpc.execute(request), rpc.execute(request)])
+  assert.deepEqual(order, ['create', 'navigate', 'reply', 'reply'])
+  assert.equal(replies[0].status, 201)
+  assert.deepEqual(replies[0], replies[1])
+  rpc.close()
+})
+
+test('failed creation does not navigate, and creation does not widen other RPC routes', async () => {
+  const replies = []
+  const rpc = new HarnessRPCExecutor(reply => replies.push(reply), async () =>
+    new Response('{"error_code":"workspace_resolution_failed"}', { status: 502 }), undefined, null, undefined,
+    { completed: () => assert.fail('failed creation must not navigate') })
+  await rpc.execute(message({ method: 'POST', payload: { name: '新会话' } }))
+  assert.equal(replies[0].body.error_code, 'workspace_resolution_failed')
+  for (const path of ['/api/sessions/', '/api/sessions?name=x', '/api/sessions/../admin', '/api/sessions/abc']) {
+    assert.throws(() => validateRPC(message({ method: 'POST', path })), /route_not_allowed/)
+  }
+  for (const method of ['PUT', 'DELETE', 'PATCH']) assert.throws(() => validateRPC(message({ method })), /route_not_allowed/)
+  assert.equal(rpcNavigationSession(message(), { session: { session_id: 'wrong' } }), null)
+  assert.equal(rpcNavigationSession(message({ method: 'POST', path: '/api/sessions/a/rename' }), { session: { session_id: 'a' } }), null)
+  assert.equal(rpcNavigationSession(message({ method: 'POST', path: '/api/sessions/a/activate' }), { active_session_id: 'a' }), 'a')
+  assert.equal(rpcNavigationSession(message({ method: 'POST', path: '/api/sessions/a/fork' }), { session: { session_id: 'b' } }), 'b')
+  rpc.close()
+})
 
 test('connection identity accompanies HTTP mutations and navigation finishes before reply', async () => {
   const order=[]

@@ -25,3 +25,26 @@ test('feedback uses the configured endpoint only, never redirects or reports uns
   response={ok:true,text:async()=>JSON.stringify({persisted:false})};await assert.rejects(a.insert({}),/invalid_receipt/)
   response={ok:false,status:503};await assert.rejects(a.insert({}),/unavailable/)
 })
+
+test('Desktop header and WebSocket reuse the exact signed cookie; invalid explicit credentials cannot fall back',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'feedback-desktop-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+  const keyPath=join(dir,'key'),store=new RemoteFeedback(()=>({}),{keyPath})
+  let cookie
+  const token=store.ensureCredential({headers:{}},{setHeader:(_k,v)=>{cookie=v}})
+  assert.equal(cookie.split(';')[0],'duplex_feedback_user='+token)
+  const req={headers:{'x-duet-identity':token}}
+  const id=store.userId(req)
+  assert.equal(new RemoteFeedback(()=>({}),{keyPath}).userId(req),id)
+  assert.equal(store.userId({headers:{'sec-websocket-protocol':'duet-voice-v1, duet-identity.'+token}}),id)
+  assert.equal(store.ensureCredential(req,{setHeader(){assert.fail('must reuse identity')}}),token)
+  const bad=token.slice(0,-1)+(token.endsWith('0')?'1':'0')
+  for(const headers of [
+    {'x-duet-identity':bad,cookie:cookie.split(';')[0]},
+    {'x-duet-identity':'anon_'+'a'.repeat(32)},
+    {'sec-websocket-protocol':'duet-identity.'+bad},
+    {'sec-websocket-protocol':`duet-identity.${token},duet-identity.${token}`},
+  ])assert.throws(()=>store.userId({headers}),/feedback_identity_unavailable/)
+  assert.notEqual(store.ensureCredential({headers:{'x-duet-identity':bad}},{setHeader(){}}),token)
+  const other=new RemoteFeedback(()=>({}),{keyPath:join(dir,'other-key')})
+  assert.throws(()=>other.userId(req),/feedback_identity_unavailable/)
+})

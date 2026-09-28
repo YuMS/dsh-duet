@@ -13,6 +13,7 @@ const modules = {
   notice: 'client/notice',
   workspaces: 'client/workspaces',
   transport: 'client/transport',
+  identity: 'client/identity', identity_protocol: 'shared/identity',
 }
 const aliases = {
   state: 'DuetState as VoiceState', audio: 'DuetAudio as VoiceAudio',

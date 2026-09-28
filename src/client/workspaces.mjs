@@ -14,6 +14,17 @@ export function requireWorkspace(ctx) {
   if (issue) throw Error(issue)
 }
 
+/** Resolve at command time from this page, not the host's global focus/cwd. */
+export function sessionCreationPayload(ctx, payload = {}) {
+  requireWorkspace(ctx)
+  const current = focusedSession(ctx)
+  const items = ctx.workspaces.list.getSnapshot().items
+  const workspace = items.find(item => item.sessionIds?.includes(current))
+    ?? (!current && items.length === 1 ? items[0] : null)
+  if (!workspace?.workspaceId) throw Object.assign(new Error('workspace_selection_required'), { code: 'workspace_selection_required' })
+  return { name: payload.name, workspace_id: workspace.workspaceId }
+}
+
 export function browserSessionCatalog(ctx, rows) {
   const snapshot = ctx.sessions.list.getSnapshot()
   const active = focusedSession(ctx)

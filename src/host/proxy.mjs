@@ -5,6 +5,7 @@ import { PLUGIN_VERSION } from '../shared/state.mjs'
 import { duetEnv } from './environment.mjs'
 import { EndpointDiscovery, connectEndpoint } from './endpoint-discovery.mjs'
 import {sessionMetadata} from './session-metadata.mjs'
+import {VOICE_PROTOCOL} from '../shared/identity.mjs'
 import { DEFAULT_DUET_URL, publicServiceAuthorization } from './service-defaults.mjs'
 export { DEFAULT_DUET_URL } from './service-defaults.mjs'
 const require = createRequire(import.meta.url)
@@ -55,7 +56,8 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
     if (!['ws:', 'wss:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error('invalid_voice_endpoint')
   }
   const { WebSocket, WebSocketServer } = require('ws')
-  const server = new WebSocketServer({ noServer: true, maxPayload: 1_000_000 })
+  const server = new WebSocketServer({ noServer: true, maxPayload: 1_000_000,
+    handleProtocols: protocols => protocols.has(VOICE_PROTOCOL) ? VOICE_PROTOCOL : false })
   const connections = new Map()
   const stop = ctx.webServer.registerUpgrade({
     path: '/duplex-control/voice/ws',

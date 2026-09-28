@@ -11,6 +11,11 @@ try {
     const url=new URL(route.request().url()), path=url.pathname
     if(path.endsWith('.mjs')) return route.fulfill({contentType:'text/javascript',body:await readFile(
       new URL('../../src/'+path.replace('/duet/assets/',''),import.meta.url),'utf8')})
+    if(path === '/duplex-control/api/sessions' && route.request().method() === 'POST') {
+      assert.equal(route.request().headers()['x-duet-browser-client'], 'connection-a')
+      assert.equal(route.request().postDataJSON().workspace_id, 'workspace-a')
+      return route.fulfill({status:201,json:{session:{session_id:'created-session',label:'新会话'}}})
+    }
     if(path.includes('/api/composer/requests')) {
       if(path.endsWith('/claim')) {
         claims.push(route.request().postDataJSON().client_id)
@@ -28,22 +33,40 @@ try {
     return route.fulfill({contentType:'text/html',body:`<script type="module">
       import {startComposerBridge} from '/duet/assets/client/composer-bridge.mjs';
       import {composerAccess,openLocalSession} from '/duet/assets/client/composer.mjs';
+      import {HarnessRPCExecutor,rpcNavigationSession} from '/duet/assets/client/rpc.mjs';
+      import {sessionCreationPayload} from '/duet/assets/client/workspaces.mjs';
       window.current='s1';window.draft={draft:'',draftRev:0,phase:'plain'};
       window.ctx={sessions:{refresh:async()=>{},scope:id=>({id}),open:id=>{current=id},list:{getSnapshot:()=>({current})}},conversation:{input:{for:()=>({state:{getSnapshot:()=>({...draft})},setDraft:text=>{draft.draft=text;draft.draftRev++}})}}};
       window.start=id=>{window.stop=startComposerBridge(ctx,id)};
+      ctx.workspaces={list:{getSnapshot:()=>({phase:'ready',items:[{workspaceId:window.workspace,sessionIds:['s1','s2']}]})}};
       window.read=()=>composerAccess(ctx).execute({method:'GET',path:'/api/sessions/s1/composer'});
       window.navigate=id=>openLocalSession(ctx,id);
+      window.createSession=async()=>{
+        const rpc=new HarnessRPCExecutor(reply=>{window.createReply=reply},fetch,undefined,null,undefined,{
+          id:'connection-a',creationPayload:p=>sessionCreationPayload(ctx,p),completed:async(request,body,signal)=>{
+            const id=rpcNavigationSession(request,body);if(id)await openLocalSession(ctx,id,signal);
+          }
+        });
+        try {await rpc.execute({type:'harness.rpc.request',connection_id:'a'.repeat(32),request_id:'b'.repeat(32),method:'POST',path:'/api/sessions',payload:{name:'新会话'}})} finally {rpc.close()}
+      };
       window.ready=true;
     </script>`})
   })
   const a=await context.newPage(), b=await context.newPage()
   for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));await page.goto('http://127.0.0.1:19362/');await page.waitForFunction(()=>window.ready)}
+  await a.evaluate(()=>{window.workspace='workspace-a'})
+  await b.evaluate(()=>{window.workspace='workspace-b'})
   await a.evaluate(()=>{draft={draft:'A 的草稿',draftRev:6,phase:'plain'}})
   await b.evaluate(()=>{draft={draft:'B 的草稿',draftRev:0,phase:'plain'}})
   const snapshot=await a.evaluate(()=>read())
   assert.equal(snapshot.composer.text,'A 的草稿')
   await a.evaluate(()=>navigate('s2'))
   assert.equal(await b.evaluate(()=>current),'s1','A navigation must not affect B')
+  await a.evaluate(()=>createSession())
+  assert.equal(await a.evaluate(()=>current),'created-session')
+  assert.equal(await a.evaluate(()=>createReply.status),201)
+  assert.equal(await b.evaluate(()=>current),'s1','A creation must not switch B')
+  assert.equal(await b.evaluate(()=>draft.draft),'B 的草稿')
   pending={id:'r1',type:'consume',session_id:'s1',target_client_id:'connection-a',
     expected_revision:6,expected_hash:snapshot.composer.hash}
   await b.evaluate(()=>start('connection-b'));await a.evaluate(()=>start('connection-a'))

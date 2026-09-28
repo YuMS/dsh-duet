@@ -7,25 +7,30 @@ import { tmpdir } from 'node:os'
 
 import { apply } from '../../src/host/plugin.mjs'
 import { HarnessRPCExecutor } from '../../src/client/rpc.mjs'
+import { browserSessionCatalog } from '../../src/client/workspaces.mjs'
+import { RemoteFeedback } from '../../src/host/feedback-files.mjs'
 
 function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRejection } = {}) {
   let handler
   const prompted = []
   const creations = [], workspacePaths = []
+  const sessionItems = [{ sessionId: 's1', running: false, projections: { values: { title: '测试' } } }]
   const listeners = new Map()
   const ctx = {
     connection: { requestRejection: () => authRejection },
     sessionController: {
       list: () => Promise.resolve({
-        items: [
-          { sessionId: 's1', running: false, projections: { values: { title: '测试' } } },
-        ],
+        items: sessionItems,
       }),
       prompt: payload => {
         prompted.push(payload)
         return Promise.resolve({ accepted: true })
       },
-      create: input => { creations.push(input); return Promise.resolve({ sessionId: 'created' }) },
+      create: input => {
+        creations.push(input)
+        sessionItems.push({ sessionId: 'created', blank: true, running: false })
+        return Promise.resolve({ sessionId: 'created' })
+      },
       rename: ({ title }) => Promise.resolve({ title, seq: 1 }),
       fork: () => forkError ? Promise.reject(forkError) : Promise.resolve({ sessionId: 'forked' }),
     },
@@ -33,7 +38,7 @@ function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRe
       ...(modernWorkspaces ? { create: ({ path }) => { workspacePaths.push(path); return Promise.resolve({ workspace: { workspaceId: 'ws1' } }) } } : {}),
       archiveSession: () => Promise.resolve({ archivedSessionIds: ['s1'] }),
     },
-    workspaceRegistry: { archivedSessionIds: [] },
+    workspaceRegistry: { archivedSessionIds: [], list: () => [{ id: 'ws-selected', path: '/work/selected' }] },
     effect: callback => callback(),
     on: (event, listener) => {
       listeners.set(event, listener)
@@ -61,9 +66,10 @@ function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRe
     }
     let status = 0, responseHeaders = {}
     const res = {
+      setHeader(name,value) {responseHeaders[name.toLowerCase()]=value},
       writeHead(value, headers = {}) {
         status = value
-        responseHeaders = headers
+        responseHeaders = {...responseHeaders,...headers}
       },
       end(value = '') {
         const text = Buffer.isBuffer(value) ? value.toString('utf8') : String(value)
@@ -130,6 +136,18 @@ test('feedback API authenticates writes and acknowledges only durable commit',as
   assert.equal(failed.status,503);assert.equal(failed.body.persisted,false);assert(!JSON.stringify(failed).includes('private database'))
   const off=makeHarness();assert.equal((await off.request('GET','/duplex-control/api/voice/config')).body.feedback_enabled,false)
   assert.equal((await off.request('POST','/duplex-control/api/feedback',data,headers)).status,503)
+})
+
+test('creation uses an existing selected workspace without registering process cwd', async () => {
+  const { request, creations, workspacePaths } = makeHarness({ modernWorkspaces: true })
+  const result = await request('POST', '/duplex-control/api/sessions', { workspace_id: 'ws-selected', name: 'test', cwd: '/wrong' })
+  assert.equal(result.status, 201)
+  assert.deepEqual(creations, [{ workspaceId: 'ws-selected' }])
+  assert.deepEqual(workspacePaths, [])
+  for (const body of [{ name: 'missing' }, { workspace_id: 'deleted' }]) {
+    assert.equal((await request('POST', '/duplex-control/api/sessions', body)).status, 409)
+  }
+  assert.equal(creations.length, 1)
 })
 
 for (const modernWorkspaces of [true, false]) {
@@ -257,6 +275,43 @@ test('bound composer requests cannot be listed, claimed or completed by another 
   assert.equal((await pending).status,202)
   assert.equal(prompted.length,1)
   assert.equal(prompted[0].content[0].text,'正确页面的草稿')
+})
+
+test('new blank session survives page catalog filtering and submits its first draft', async () => {
+  const {request, prompted} = makeHarness()
+  const owner = {'x-duet-browser-client':'page-new'}
+  await request('GET','/duplex-control/api/sessions') // host focus remains s1
+  assert.equal((await request('POST','/duplex-control/api/sessions', {workspace_id:'ws-selected'}, owner)).status,201)
+  const ctx = {sessions:{list:{getSnapshot:()=>({current:'created'})}},
+    workspaces:{list:{getSnapshot:()=>({archivedSessionIds:[]})}}}
+  for (const headers of [owner, {'x-duet-catalog-scope':'page'}]) {
+    const rows=(await request('GET','/duplex-control/api/sessions',undefined,headers)).body.sessions
+    assert.equal(rows.find(row=>row.session_id==='created').blank,true)
+    assert.equal(browserSessionCatalog(ctx,rows).find(row=>row.active).session_id,'created')
+    const other = {...ctx,sessions:{list:{getSnapshot:()=>({current:'s1'})}}}
+    assert(!browserSessionCatalog(other,rows).some(row=>row.session_id==='created'))
+  }
+  assert(!(await request('GET','/duplex-control/api/sessions')).body.sessions.some(row=>row.session_id==='created'))
+  const pending=request('POST','/duplex-control/api/sessions/created/composer/submit',{
+    expected_revision:1,expected_hash:sha256('你好。'),
+  },owner)
+  let candidate
+  for(let i=0;i<100&&!candidate;i++) {
+    candidate=(await request('GET','/duplex-control/api/composer/requests?client_id=page-new')).body.requests[0]
+    if(!candidate) await new Promise(resolve=>setTimeout(resolve,1))
+  }
+  assert.ok(candidate)
+  assert.equal(candidate.session_id,'created')
+  const route=`/duplex-control/api/composer/requests/${candidate.id}`
+  assert.equal((await request('POST',route+'/claim',{client_id:'page-new'})).status,200)
+  assert.equal((await request('POST',route+'/complete',{client_id:'page-new',ok:true,composer:{
+    session_id:'created',consumed_text:'你好。',consumed_revision:1,consumed_hash:sha256('你好。'),
+    text:'',revision:2,hash:sha256(''),phase:'plain',
+  }})).status,200)
+  assert.equal((await pending).status,202)
+  assert.equal(prompted.length,1)
+  assert.equal(prompted[0].sessionId,'created')
+  assert.equal(prompted[0].content[0].text,'你好。')
 })
 
 test('page-bound activation and fork do not broadcast a host focus change', async () => {
@@ -454,4 +509,38 @@ test('focus epoch changes across host restarts and revision has a legacy-safe ba
   assert.notEqual(firstFocus.focus_epoch, secondFocus.focus_epoch)
   assert.ok(firstFocus.revision > 1_000_000_000_000)
   assert.ok(secondFocus.revision > 1_000_000_000_000)
+})
+
+test('config exposes a signed credential only on explicit transport negotiation and retains DSH authentication',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'duet-config-identity-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+  const rows=[]
+  const store=new RemoteFeedback(()=>({}),{keyPath:join(dir,'key')})
+  store.insert=async row=>{rows.push(row);return {archive_id:'fixture'}}
+  const h=makeHarness({options:{feedbackStore:store,settingsPath:join(dir,'settings.json')}})
+  const web=await h.request('GET','/duplex-control/api/voice/config')
+  assert.equal(web.status,200);assert.equal(web.body.feedback_identity,undefined)
+  const token=web.headers['set-cookie'].split(';')[0].split('=')[1]
+  const headers={'x-duet-identity-transport':'local-v1','x-duet-identity':token}
+  const desktop=await h.request('GET','/duplex-control/api/voice/config',undefined,headers)
+  assert.equal(desktop.body.feedback_identity,token);assert.equal(desktop.headers['cache-control'],'no-store')
+  assert.equal(desktop.headers['set-cookie'],undefined)
+  const saved=await h.request('POST','/duplex-control/api/feedback',{
+    kind:'text',request_id:'12345678-1234-4234-8234-123456789abc',text:'fixture only',
+  },{...headers,host:'localhost:3080','x-duplex-settings':'1','content-type':'application/json'})
+  assert.equal(saved.status,201);assert.equal(rows[0].user_id,store.userId({headers}))
+  const writeHeaders={...headers,host:'localhost:3080','x-duplex-settings':'1','content-type':'application/json'}
+  const input={revision:desktop.body.revision,backend_url:'ws://127.0.0.1:19991/ws'}
+  assert.equal((await h.request('PUT','/duplex-control/api/voice/config',input,writeHeaders)).status,200)
+  for(const badHeaders of [
+    {...writeHeaders,'x-duet-identity':'tampered'},
+    {...writeHeaders,'x-duet-identity':undefined},
+    {...writeHeaders,'x-duet-identity-transport':undefined},
+    {...writeHeaders,origin:'http://evil.invalid'},
+    {...writeHeaders,origin:'null'},
+    {...writeHeaders,'x-duplex-settings':undefined},
+  ])assert.equal((await h.request('POST','/duplex-control/api/feedback',{},badHeaders)).status,403)
+  const denied=makeHarness({authRejection:401,options:{feedbackStore:store}})
+  assert.equal((await denied.request('GET','/duplex-control/api/voice/config',undefined,headers)).status,401)
+  assert.equal((await denied.request('POST','/duplex-control/api/feedback',{},writeHeaders)).status,401)
+  assert.equal((await denied.request('PUT','/duplex-control/api/voice/config',input,writeHeaders)).status,401)
 })

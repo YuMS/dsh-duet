@@ -94,10 +94,10 @@ export class DuetSettings {
   }
 }
 
-export function settingsWriteAllowed(req) {
+export function settingsWriteAllowed(req, { verifiedLocalIdentity = false } = {}) {
   try {
     return req.headers['x-duplex-settings'] === '1'
-      && new URL(req.headers.origin).host === req.headers.host
+      && ((req.headers.origin === undefined && verifiedLocalIdentity) || new URL(req.headers.origin).host === req.headers.host)
       && String(req.headers['content-type'] || '').startsWith('application/json')
   } catch { return false }
 }

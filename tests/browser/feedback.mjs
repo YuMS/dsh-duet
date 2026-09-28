@@ -7,7 +7,7 @@ try {
   let writes = 0, slow = false, reply
   await page.route('http://127.0.0.1:19349/**', async route => {
     const path = new URL(route.request().url()).pathname
-    if (path.endsWith('.mjs')) return route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../src/client/feedback.mjs', import.meta.url), 'utf8') })
+    if (path.endsWith('.mjs')) return route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../src/'+(path==='/shared/identity.mjs'?'shared/identity.mjs':'client/'+path.split('/').at(-1)), import.meta.url), 'utf8') })
     if (path.endsWith('/api/feedback')) { writes++; if(slow)await new Promise(resolve=>reply=resolve);return route.fulfill({status:slow?503:201,json:slow?{}:{persisted:true}}) }
     return route.fulfill({ contentType: 'text/html', body: `<button id="anchor" style="position:fixed;bottom:85px;left:18px;height:36px;width:180px">duet modes</button><script type="module">import {mountRating} from '/feedback.mjs';window.show=()=>mountRating(document.querySelector('#anchor'),'fixture-ticket');</script>` })
   })

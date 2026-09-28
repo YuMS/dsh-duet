@@ -1,19 +1,20 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.5'
-import { DuetAudio } from './audio.mjs?v=0.1.5'
-import { HarnessRPCExecutor } from './rpc.mjs?v=0.1.5'
-import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.5'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.1.5'
-import { mountTutorial } from './tutorial.mjs?v=0.1.5'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.5'
-import { mountRating } from './feedback.mjs?v=0.1.5'
-import { createAudioUploadConsent } from './consent.mjs?v=0.1.5'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.5'
-import { nativeInteractions } from './interactions.mjs?v=0.1.5'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.1.5'
-import { mountControlsLayout } from './controls-layout.mjs?v=0.1.5'
-import { mountNotice } from './notice.mjs?v=0.1.5'
-import { workspaceIssue, requireWorkspace, browserSessionCatalog } from './workspaces.mjs?v=0.1.5'
-import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.5'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.6'
+import { DuetAudio } from './audio.mjs?v=0.1.6'
+import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.1.6'
+import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.6'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.1.6'
+import { mountTutorial } from './tutorial.mjs?v=0.1.6'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.6'
+import { mountRating } from './feedback.mjs?v=0.1.6'
+import { createAudioUploadConsent } from './consent.mjs?v=0.1.6'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.6'
+import { nativeInteractions } from './interactions.mjs?v=0.1.6'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.1.6'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.1.6'
+import { mountNotice } from './notice.mjs?v=0.1.6'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.1.6'
+import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.6'
+import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.1.6'
 
 export function mountDuet(ctx) {
   const pageId = crypto.randomUUID()
@@ -91,9 +92,9 @@ export function mountDuet(ctx) {
       (await interactions(request, signal)) ?? composer.execute(request, signal), rows =>
         browserSessionCatalog(ctx, rows).map(row => ({ ...row, active: row.session_id === focusedSession(ctx) })), {
           id: connectionTraceId,
+          creationPayload: payload => sessionCreationPayload(ctx, payload),
           completed: async (request, body, signal) => {
-            const id = request.path.endsWith('/activate') ? body.active_session_id
-              : request.path.endsWith('/fork') ? body.session?.session_id : null
+            const id = rpcNavigationSession(request, body)
             if (id) await openLocalSession(ctx, id, signal)
           },
         })
@@ -123,17 +124,17 @@ export function mountDuet(ctx) {
     }
     const open = async () => {
       if (closed) return
-      // Establish/renew the host-signed anonymous cookie before the WS handshake.
+      // Refresh Desktop-compatible feedback before the WS handshake.
       const configTimer = setTimeout(() => opening.abort(Error('voice_start_timeout')), 10000)
       let identity
-      try { identity = await fetch('/duplex-control/api/voice/config', {credentials:'same-origin',cache:'no-store',signal:opening.signal}) }
+      try { identity = await identityFetch('/duplex-control/api/voice/config', {credentials:'same-origin',cache:'no-store',signal:opening.signal}) }
       finally { clearTimeout(configTimer) }
       if(!identity.ok)throw Error('voice_config_unavailable')
       requireWorkspace(ctx)
       if(closed)return
       if (mode === 'online') stopBridge = startComposerBridge(ctx, connectionTraceId)
       report({ event: 'browser.connection_start', page_binding: 'connection_owner_v1' })
-      ws = new WebSocket(voiceSocketUrl({ mode, plugin_version: PLUGIN_VERSION, client_trace_id: connectionTraceId, page_id: pageId }))
+      ws = new WebSocket(voiceSocketUrl({ mode, plugin_version: PLUGIN_VERSION, client_trace_id: connectionTraceId, page_id: pageId }), identityVoiceProtocols())
       ws.onopen = () => {
         send({ type: 'session.update' })
         if (mode === 'online') stopComposer = observeComposer(ctx, composer, send)
@@ -302,7 +303,8 @@ export function mountDuet(ctx) {
 
   const api = async (path, signal) => {
     const response = await fetch(`/duplex-control/api/${path}`, { cache: 'no-store',
-      signal, headers: { 'X-Duet-Native-Interactions': '1' } })
+      signal, headers: { 'X-Duet-Native-Interactions': '1',
+        ...(path === 'sessions' ? { 'X-Duet-Catalog-Scope': 'page' } : {}) } })
     if (!response.ok) throw Object.assign(new Error('harness_unavailable'), {status:response.status})
     return response.json()
   }

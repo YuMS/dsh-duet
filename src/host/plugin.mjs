@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { registerDuetProxy, duetConfig } from './proxy.mjs'
 import { DuetSettings, settingsWriteAllowed } from './settings.mjs'
+import { IDENTITY_TRANSPORT_HEADER, IDENTITY_TRANSPORT } from '../shared/identity.mjs'
 import { ServiceNotices } from './notices.mjs'
 import { ServiceInfo } from './service-info.mjs'
 import { DuetTrace } from './trace.mjs'
@@ -485,9 +486,18 @@ export function apply(ctx, options = {}) {
     completeJob(job, event)
   })
 
+  const identityWriteAllowed = req => {
+    if(settingsWriteAllowed(req))return true
+    // Desktop strips Origin after enforcing dsh-app://app in its bridge.
+    // Never infer a trusted bridge from an absent header alone.
+    if(req.headers.origin!==undefined || req.headers[IDENTITY_TRANSPORT_HEADER.toLowerCase()]!==IDENTITY_TRANSPORT)return false
+    try {feedback.user(req);return settingsWriteAllowed(req,{verifiedLocalIdentity:true})} catch {return false}
+  }
   const handleApi = async (req, res, pathname) => {
     if(req.method==='POST' && pathname===`${ROUTE}/api/feedback`){
-      if(!settingsWriteAllowed(req)){sendError(res,403,'same-origin feedback request required');return}
+      const rejection = ctx.connection.requestRejection(req)
+      if(rejection){sendError(res,rejection,'请先打开并登录 DSH 主页面');return}
+      if(!identityWriteAllowed(req)){sendError(res,403,'same-origin feedback request required');return}
       try {sendJson(res,201,await feedback.submit(req,await readJson(req)))}
       catch(error){
         const code=String(error.message||'')
@@ -509,12 +519,17 @@ export function apply(ctx, options = {}) {
       return
     }
     if (req.method === 'GET' && pathname === `${ROUTE}/api/voice/config`) {
-      try{feedbackStore?.ensureIdentity?.(req,res)}catch{sendJson(res,503,{error_code:'feedback_identity_unavailable'});return}
-      sendJson(res, 200, { ...settings.public(), plugin_version: PLUGIN_VERSION, feedback_enabled: feedback.enabled, connection: duetProxy?.snapshot?.() || { online: 0, tts_only: 0 } })
+      let identity
+      try {
+        if(req.headers[IDENTITY_TRANSPORT_HEADER.toLowerCase()]===IDENTITY_TRANSPORT)identity=feedbackStore?.ensureCredential?.(req,res)
+        else feedbackStore?.ensureIdentity?.(req,res)
+      } catch {sendJson(res,503,{error_code:'feedback_identity_unavailable'});return}
+      sendJson(res, 200, { ...settings.public(), plugin_version: PLUGIN_VERSION, feedback_enabled: feedback.enabled,
+        ...(identity?{feedback_identity:identity}:{}), connection: duetProxy?.snapshot?.() || { online: 0, tts_only: 0 } })
       return
     }
     if (req.method === 'PUT' && pathname === `${ROUTE}/api/voice/config`) {
-      if (!settingsWriteAllowed(req)) { sendError(res, 403, 'same-origin settings request required'); return }
+      if (!identityWriteAllowed(req)) { sendError(res, 403, 'same-origin settings request required'); return }
       try {
         const result = await settings.save(await readJson(req))
         Object.assign(voice, settings.effective())
@@ -779,7 +794,10 @@ export function apply(ctx, options = {}) {
       return
     }
     if (req.method === 'GET' && pathname === `${ROUTE}/api/sessions`) {
-      sendJson(res, 200, { sessions: await listSessions({forCatalog:true}) })
+      // A page owns its focus. Do not remove blank sessions using host focus
+      // before that page can select its own current blank session.
+      const pageCatalog = browserOwner(req) || req.headers['x-duet-catalog-scope'] === 'page'
+      sendJson(res, 200, { sessions: await listSessions({forCatalog:!pageCatalog}) })
       return
     }
     const composer = pathname.match(new RegExp(`^${ROUTE}/api/sessions/([^/]+)/composer$`))
@@ -905,11 +923,17 @@ export function apply(ctx, options = {}) {
     if (req.method === 'POST' && pathname === `${ROUTE}/api/sessions`) {
       const body = await readJson(req)
       const name = String(body.name || '').trim()
-      const cwd = String(body.cwd || process.cwd()).trim()
+      const cwd = String(body.cwd || '').trim()
       // Current DSH only enables the blank-session composer for a session
       // owned by a registered workspace. cwd alone creates an orphan session.
-      let workspaceId
-      if (typeof ctx.workspaceController.create === 'function') {
+      let workspaceId = typeof body.workspace_id === 'string' ? body.workspace_id.trim() : ''
+      if (workspaceId) {
+        if (!(ctx.workspaceRegistry.list?.() || []).some(workspace => workspace.id === workspaceId)) {
+          throw codedError('workspace_not_found', 'Selected workspace is no longer available', 409)
+        }
+      } else if (!cwd || browserOwner(req)) {
+        throw codedError('workspace_selection_required', 'Select a workspace before creating a session', 409)
+      } else if (typeof ctx.workspaceController.create === 'function') {
         const resolved = await ctx.workspaceController.create({ path: cwd })
         workspaceId = resolved.workspace?.workspaceId
         if (typeof workspaceId !== 'string' || !workspaceId) {

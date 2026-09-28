@@ -2,7 +2,15 @@
 import { orderSessionCatalog, readWorkspaceView } from '../shared/catalog.mjs'
 const MAX_BYTES = 256_000
 const READ = /^\/api\/(?:health|sessions|jobs|results|interactions|composer\/focused|sessions\/[A-Za-z0-9_-]+\/composer)$/
-const WRITE = /^\/api\/(?:sessions\/[A-Za-z0-9_-]+\/(?:composer\/submit|activate|rename|fork)|interactions\/(?:(?:question|approval)(?::|%3[Aa]))?[A-Za-z0-9_-]+\/respond)$/
+const WRITE = /^\/api\/(?:sessions|sessions\/[A-Za-z0-9_-]+\/(?:composer\/submit|activate|rename|fork)|interactions\/(?:(?:question|approval)(?::|%3[Aa]))?[A-Za-z0-9_-]+\/respond)$/
+
+// Navigate only the connection-owning page after a successful mutation.
+export function rpcNavigationSession(request, body) {
+  if (request.method !== 'POST') return null
+  if (/^\/api\/sessions\/[A-Za-z0-9_-]+\/activate$/.test(request.path)) return body.active_session_id
+  if (request.path === '/api/sessions' || /^\/api\/sessions\/[A-Za-z0-9_-]+\/fork$/.test(request.path)) return body.session?.session_id
+  return null
+}
 
 export function validateRPC(request) {
   if (request.type !== 'harness.rpc.request' || !/^[a-f0-9]{32}$/.test(request.request_id || '')
@@ -63,6 +71,11 @@ export class HarnessRPCExecutor {
     const timer = setTimeout(() => controller.abort(), 12_000)
     const envelope = { type: 'harness.rpc.response', connection_id: request.connection_id, request_id: request.request_id }
     try {
+      let payload = request.payload ?? {}
+      if (request.method === 'POST' && request.path === '/api/sessions' && this.binding.creationPayload) {
+        try { payload = this.binding.creationPayload(payload) }
+        catch (error) { return { ...envelope, status: 409, body: { error_code: error.code || error.message || 'workspace_selection_required' } } }
+      }
       if (this.localComposer) {
         try {
           const body = await this.localComposer(request, controller.signal)
@@ -78,7 +91,7 @@ export class HarnessRPCExecutor {
         headers: { 'Content-Type': 'application/json', 'X-Duplex-Control-Client': 'realtime-client-rpc-v1',
           'X-Duet-Native-Interactions': '1',
           ...(this.binding.id ? { 'X-Duet-Browser-Client': this.binding.id } : {}) },
-        ...(request.method !== 'GET' ? { body: JSON.stringify(request.payload ?? {}) } : {}),
+        ...(request.method !== 'GET' ? { body: JSON.stringify(payload) } : {}),
       })
       const text = await response.text()
       if (new TextEncoder().encode(text).length > MAX_BYTES - 512) throw new Error('harness_rpc_response_too_large')
@@ -86,7 +99,8 @@ export class HarnessRPCExecutor {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_harness_rpc_body')
       controller.signal.throwIfAborted()
       if (response.ok && this.binding.completed) await this.binding.completed(request, body, controller.signal)
-      if (response.status === 200 && request.path === '/api/sessions' && Array.isArray(body.sessions)) {
+      if (response.status === 200 && request.method === 'GET' && request.path === '/api/sessions' && Array.isArray(body.sessions)) {
+        body.duet_rpc_capabilities = ['create_session_v1']
         // Both startup prompt and nth_N resolution read this same browser-local
         // order, including manual drag order; archived rows cannot consume ranks.
         body.sessions = this.catalogOrder(body.sessions)

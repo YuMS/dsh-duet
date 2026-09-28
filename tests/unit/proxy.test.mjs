@@ -4,6 +4,10 @@ import http from 'node:http'
 import { once } from 'node:events'
 import { WebSocket, WebSocketServer } from 'ws'
 import { DEFAULT_DUET_URL, registerDuetProxy, duetConfig } from '../../src/host/proxy.mjs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { RemoteFeedback } from '../../src/host/feedback-files.mjs'
 import { FeedbackService } from '../../src/host/feedback-store.mjs'
 import { EndpointDiscovery } from '../../src/host/endpoint-discovery.mjs'
 import { PLUGIN_VERSION } from '../../src/shared/state.mjs'
@@ -46,8 +50,8 @@ async function fixture(t, rejectStatus, overrides = {}) {
     wss.close()
     await Promise.all([new Promise(r => host.close(r)), new Promise(r => upstream.close(r))])
   })
-  return { connections, messages, headers, connect(mode = 'tts_only', version = '0.1.0') {
-    return new WebSocket(`ws://127.0.0.1:${host.address().port}/duplex-control/voice/ws?mode=${mode}&plugin_version=${version}`)
+  return { connections, messages, headers, connect(mode = 'tts_only', version = '0.1.0', protocols) {
+    return new WebSocket(`ws://127.0.0.1:${host.address().port}/duplex-control/voice/ws?mode=${mode}&plugin_version=${version}`, protocols)
   } }
 }
 
@@ -256,4 +260,34 @@ test('old result backend is rejected instead of silently losing task identity', 
   ws.send(JSON.stringify({ type: 'session.update' }))
   assert.equal((await event).error.code, 'harness_result_backend_upgrade_required')
   await once(ws, 'close')
+})
+
+
+test('cookie-stripping Desktop sends signed WS identity, receives a rating ticket, and submits as the same user', {timeout:10000}, async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'duet-desktop-proxy-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+  const store=new RemoteFeedback(()=>({}),{keyPath:join(dir,'key')})
+  const rows=[];store.insert=async record=>{rows.push(record);return {archive_id:'fixture-only'}}
+  const token=store.ensureCredential({headers:{}},{setHeader(){}})
+  const feedback=new FeedbackService(store)
+  const f=await fixture(t,null,{feedback})
+  for(const mode of ['online','tts_only']){
+    const ws=f.connect(mode,PLUGIN_VERSION,['duet-voice-v1','duet-identity.'+token])
+    await once(ws,'open');assert.equal(ws.protocol,'duet-voice-v1')
+    const response=next(ws);ws.send(JSON.stringify({type:'session.update'}))
+    const event=await response
+    assert.ok(event.feedback_session_ticket)
+    assert.equal(f.messages.at(-1).client.anonymous_user_id,store.userId({headers:{'x-duet-identity':token}}))
+    assert.equal(f.headers.at(-1)['sec-websocket-protocol'],undefined)
+    assert.equal(f.headers.at(-1)['x-duet-identity'],undefined)
+    assert.ok(!JSON.stringify(f.messages).includes(token))
+    const closed=once(f.connections.at(-1),'close');ws.close();await once(ws,'close');await closed
+    await feedback.submit({headers:{'x-duet-identity':token}},{kind:'rating',request_id:crypto.randomUUID(),rating:5,session_ticket:event.feedback_session_ticket})
+    assert.equal(rows.at(-1).user_id,f.messages.at(-1).client.anonymous_user_id)
+  }
+  const bad=token.slice(0,-1)+(token.endsWith('0')?'1':'0')
+  const ws=f.connect('tts_only',PLUGIN_VERSION,['duet-voice-v1','duet-identity.'+bad])
+  await once(ws,'open');const response=next(ws);ws.send(JSON.stringify({type:'session.update'}))
+  assert.equal((await response).feedback_session_ticket,undefined)
+  assert.equal(f.messages.at(-1).client.anonymous_user_id,undefined)
+  ws.close();await once(ws,'close')
 })

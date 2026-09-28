@@ -1,4 +1,6 @@
 /** Optional, explicit rating; never opens voice or submits without a user click. */
+import { identityFetch } from './identity.mjs?v=0.1.6'
+
 export function mountRating(anchor, sessionTicket) {
   if(!sessionTicket)return null
   const panel=document.createElement('section')
@@ -34,7 +36,7 @@ export function mountRating(anchor, sessionTicket) {
     requestController=new AbortController()
     requestTimeout=setTimeout(()=>requestController.abort(),15000)
     try {
-      const r=await fetch('/duplex-control/api/feedback',{method:'POST',credentials:'same-origin',
+      const r=await identityFetch('/duplex-control/api/feedback',{method:'POST',credentials:'same-origin',
         headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'},signal:requestController.signal,
         body:JSON.stringify({kind:'rating',request_id:requestId,session_ticket:sessionTicket,rating})})
       const result=await r.json()

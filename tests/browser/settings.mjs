@@ -10,6 +10,7 @@ try {
     const errors = [], calls = []
     const config = { debug, feedback_enabled:true, revision: 0, backend_url: 'ws://127.0.0.1:28925/ws?protocol=realtime_v2', auth_configured: false, insecure_transport:true, token_placeholder: '请输入访问密钥', connection: { online: 0, tts_only: 0 } }
     const feedback=[]
+    let configUnavailable = false
     await page.addInitScript(() => {
       window.micRequests = 0
       window.micDevices = [{kind:'audioinput',deviceId:'default',label:'默认'}, {kind:'audioinput',deviceId:'usb',label:'USB 麦克风'}, {kind:'audioinput',deviceId:'built-in',label:'内置麦克风'}]
@@ -21,6 +22,7 @@ try {
       const req = route.request(), path = new URL(req.url()).pathname
       calls.push([req.method(), path])
       if (path === '/duet/') { await route.fulfill({ contentType: 'text/html', body: html }); return }
+      if (path.startsWith('/duet/assets/') && path.endsWith('/identity.mjs')) return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.slice('/duet/assets/'.length),import.meta.url),'utf8')})
       if (path.endsWith('tutorial-request.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/tutorial-request.mjs',import.meta.url),'utf8')});return}
       if (path.endsWith('microphone.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/microphone.mjs',import.meta.url),'utf8')});return}
       if (path.endsWith('shortcuts.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/shortcuts.mjs',import.meta.url),'utf8')});return}
@@ -32,6 +34,7 @@ try {
       } else if (path.endsWith('/voice/service-info')) {
         json = {status:'ok',models:{duplex:'duet-duplex-v0.1',tts:'duet-tts-v0.1'}}
       } else if (path.endsWith('/voice/config')) {
+        if (configUnavailable) return route.fulfill({status:503,json:{detail:'fixture unavailable'}})
         if (req.method() === 'PUT') {
           assert.equal(req.headers()['x-duplex-settings'], '1')
           const input = req.postDataJSON()
@@ -41,7 +44,7 @@ try {
         json = config
       } else if (path.endsWith('/announcements')) {
         json = { status: 'ok', items: [{ title: '服务通知', body: '<script>window.pwned=true</script>', level: 'info', published_at: '2026-09-14T00:00:00Z' }] }
-      } else if (path.endsWith('/health')) json = { browser_client_connected: false, browser_client_last_seen_at: null }
+      } else if (path.endsWith('/health')) json = { browser_client_connected: true, browser_focus_matches:false, browser_client_last_seen_at:Date.now()/1000 }
       else if (path.endsWith('/sessions')) json = { sessions: [] }
       else if (path.endsWith('/jobs')) json = { jobs: [] }
       await route.fulfill({ json })
@@ -84,6 +87,24 @@ try {
     await page.locator('#clearSpeakerShortcut').click()
     assert.equal(await page.locator('#speakerShortcut').inputValue(),'')
     assert.equal(await page.locator('#duetMark').evaluate(e=>e.style.color),'rgb(237, 155, 53)')
+    assert.equal(await page.locator('#connectionTitle').textContent(), '语音未开启')
+    // Old global-focus health must never override a live voice connection.
+    for (const [connection, title, mode] of [
+      [{connecting:1}, '语音正在连接', '正在连接'],
+      [{online:1,connecting:1}, '语音已连接', '交互模式'],
+      [{tts_only:1}, '语音已连接', '播报模式'],
+      [{online:0,tts_only:0,connecting:0}, '语音未开启', '未开启'],
+    ]) {
+      config.connection = connection
+      await page.waitForFunction(({title,mode}) => document.getElementById('connectionTitle').textContent === title
+        && document.getElementById('duetConnection').textContent === mode, {title,mode})
+    }
+    configUnavailable = true
+    await page.getByText('语音连接信息不可用', {exact:true}).first().waitFor()
+    assert.equal(await page.locator('#connectionTitle').textContent(), '语音连接信息不可用')
+    configUnavailable = false
+    await page.waitForFunction(() => document.getElementById('connectionTitle').textContent === '语音未开启')
+    assert.equal(calls.some(([,path]) => path.endsWith('/health')), false)
     assert.doesNotMatch(await page.locator('body').innerText(), /未加密连接/)
     const originalURL=page.url()
     await page.locator('#openTutorial').click()

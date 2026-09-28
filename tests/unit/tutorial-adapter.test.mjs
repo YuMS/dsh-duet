@@ -37,6 +37,18 @@ test('aborted write never touches the editor',async()=>{
   const f=fixture(),c=new AbortController();c.abort()
   await assert.rejects(f.a.write('tutorial','bad','',c.signal),{name:'AbortError'});assert.equal(f.calls.length,0)
 })
+test('tutorial creates in the page workspace without a cwd fallback',async()=>{
+  const ctx={sessions:{list:{getSnapshot:()=>({current:'s2'})}},workspaces:{list:{getSnapshot:()=>({phase:'ready',items:[
+    {workspaceId:'w1',sessionIds:['s1']},{workspaceId:'w2',sessionIds:['s2']},
+  ]})}}}
+  const previous=globalThis.fetch,requests=[]
+  globalThis.fetch=async(url,options)=>{requests.push({url,body:JSON.parse(options.body)});return {ok:true,json:async()=>({session:{session_id:'new'}})}}
+  try {
+    assert.equal(await tutorialAdapter(ctx,{}, {},()=>{}).create('教学',new AbortController().signal),'new')
+    assert.deepEqual(requests,[{url:'/duplex-control/api/sessions',body:{name:'教学',workspace_id:'w2'}}])
+  }finally{globalThis.fetch=previous}
+})
+
 test('tutorial exposes missing workspace and rejects creation before API calls',async()=>{
   const ctx={workspaces:{list:{getSnapshot:()=>({phase:'ready',items:[]})}}}
   const adapter=tutorialAdapter(ctx,{}, {},()=>{})
