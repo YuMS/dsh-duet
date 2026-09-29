@@ -1,4 +1,5 @@
 /** Browser-owned drafts: bounded snapshots and explicit overwrite/CAS edit policies. */
+import { sessionLabel } from '../shared/catalog.mjs'
 const fail = code => { const error = new Error(code); error.code = code; throw error }
 const hash = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256',
   new TextEncoder().encode(text)))].map(v => v.toString(16).padStart(2, '0')).join('')
@@ -26,7 +27,7 @@ export async function openLocalSession(ctx, id, signal) {
   }
 }
 
-export function composerAccess(ctx, label = id => id) {
+export function composerAccess(ctx, label = () => '') {
   const focused = () => focusedSession(ctx)
   const inputFor = id => {
     const scope = id && ctx.sessions.scope(id)
@@ -40,7 +41,7 @@ export function composerAccess(ctx, label = id => id) {
     const digest = await hash(before.draft)
     const live = input.state.getSnapshot()
     if (stable && (live.draft !== before.draft || live.draftRev !== before.draftRev || live.phase !== before.phase)) fail('draft_conflict')
-    return { session_id: id, session_name: label(id), text: before.draft,
+    return { session_id: id, session_name: sessionLabel(label(id), id), text: before.draft,
       revision: before.draftRev, hash: digest, phase: before.phase }
   }
   const read = async () => {

@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.1.6'
+export const PLUGIN_VERSION = '0.1.7'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
@@ -89,10 +89,10 @@ export class DuetState {
       this.pending.delete(event.message_id)
       this.sent.delete(event.message_id)
       this.flush()
-    } else if (event.type === 'error') {
+    } else if (event.type === 'error' || (event.type === 'warning' && event.warning?.code === 'malformed_dense_action')) {
       // A rejected model action is not a dead transport. Never execute/retry it,
       // but leave the user able to clarify instead of closing their microphone.
-      if (event.code === 'malformed_dense_action') {
+      if ((event.code || event.warning?.code) === 'malformed_dense_action') {
         this.notice('这次操作指令格式有误，未执行。语音仍已连接，请重新说明。')
       } else this.fail(event.code, event)
     }

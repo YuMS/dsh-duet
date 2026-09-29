@@ -6,6 +6,7 @@ import { defaultStateFile } from './storage-paths.mjs'
 import { randomUUID } from 'node:crypto'
 import { duetEnv } from './environment.mjs'
 import { publicServiceAuthorization, isPublicTrialEndpoint } from './service-defaults.mjs'
+import { migrateRetiredSettings } from './settings-migration.mjs'
 
 export function normalizeBackendURL(value) {
   if (typeof value !== 'string' || value.length > 2048) throw new Error('invalid_backend_url')
@@ -38,7 +39,7 @@ export class DuetSettings {
     this.writing = false
     try {
       const data = JSON.parse(readFileSync(this.path, 'utf8'))
-      this.saved = this.validate(data)
+      this.saved = this.validate(migrateRetiredSettings(data, this.path))
     } catch (error) { if (error.code !== 'ENOENT') throw new Error('invalid_voice_settings_file') }
   }
 

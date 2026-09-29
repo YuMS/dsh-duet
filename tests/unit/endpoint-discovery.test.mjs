@@ -12,6 +12,20 @@ import {DEFAULT_DUET_URL} from '../../src/host/service-defaults.mjs'
 const config={endpoints:{online:DEFAULT_DUET_URL,tts_only:DEFAULT_DUET_URL},authorization:'fixture'}
 const response=(endpoint='47.117.104.188')=>new Response(JSON.stringify({schema_version:1,recommended_endpoint:endpoint,ttl_seconds:60,default_endpoint:'ws://evil.example/ws'}))
 
+test('recommendation matching the HTTPS default uses one direct route', async()=>{
+  const discovery=new EndpointDiscovery(()=>config,{fetchImpl:async()=>response(DEFAULT_DUET_URL),
+    resolve:async()=>[{address:'192.0.2.10',family:4}]})
+  await discovery.refreshIfDue()
+  for(const mode of ['online','tts_only']){
+    const routes=await discovery.plan(mode)
+    assert.equal(routes.length,1)
+    assert.equal(routes[0].url,DEFAULT_DUET_URL)
+    assert.equal(routes[0].selection,'default')
+    assert.equal(endpointHTTP(routes[0].url,'/api/service-info'),
+      'https://duet-router-acc.router.dsh-duet.com/api/service-info')
+  }
+})
+
 test('recommendations preserve explicit HTTPS/WSS and keep bare-address compatibility',async()=>{
   const resolve=async()=>[{address:'192.0.2.10',family:4}]
   for(const [input,expected] of [

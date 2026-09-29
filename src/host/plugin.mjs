@@ -11,7 +11,7 @@ import { DuetTrace } from './trace.mjs'
 import { FeedbackService } from './feedback-store.mjs'
 import { RemoteFeedback } from './feedback-files.mjs'
 import { PLUGIN_VERSION } from '../shared/state.mjs'
-import { buildSessionCatalog } from '../shared/catalog.mjs'
+import { buildSessionCatalog, sessionLabel } from '../shared/catalog.mjs'
 import { publicAsset } from './assets.mjs'
 import { duetEnv } from './environment.mjs'
 import { EndpointDiscovery } from './endpoint-discovery.mjs'
@@ -945,7 +945,7 @@ export function apply(ctx, options = {}) {
       if (name) {
         await ctx.sessionController.rename({ sessionId: created.sessionId, title: name })
       }
-      sendJson(res, 201, { session: { session_id: created.sessionId, label: name || created.sessionId, active: true } })
+      sendJson(res, 201, { session: { session_id: created.sessionId, label: sessionLabel(name, created.sessionId), active: true } })
       return
     }
 

@@ -1,5 +1,5 @@
 /** Workspace readiness and browser-local session ordering shared by all voice paths. */
-import { orderSessionCatalog, readWorkspaceView } from '../shared/catalog.mjs'
+import { orderSessionCatalog, readWorkspaceView, sessionLabel } from '../shared/catalog.mjs'
 import { focusedSession } from './composer.mjs'
 
 export function workspaceIssue(ctx) {
@@ -31,6 +31,7 @@ export function browserSessionCatalog(ctx, rows) {
   const archived = new Set(ctx.workspaces?.list?.getSnapshot().archivedSessionIds || [])
   return orderSessionCatalog(rows.filter(row => !archived.has(row.session_id)).map(row => ({
     ...row, active: row.session_id === active,
+    label: sessionLabel(row.label, row.session_id),
     updated_at: snapshot.byId?.[row.session_id]?.updatedAt ?? row.updated_at,
   })), readWorkspaceView())
 }

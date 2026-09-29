@@ -75,6 +75,15 @@ const write = before => ({ method: 'PUT', path: '/api/sessions/a/composer', payl
   expected_revision: before.revision, expected_hash: before.hash, text: '新内容', require_focus: true,
 } })
 
+test('unnamed composer snapshots keep the ID only in their routing field', async () => {
+  const f = fixture()
+  const value = await f.access.read()
+  assert.equal(value.session_id, 'a')
+  assert.equal(value.session_name, '未命名会话')
+  const result = await f.access.execute(write(value))
+  assert.equal(result.composer.session_name, '未命名会话')
+})
+
 test('local write checks manual edits, focus and phase; returns authoritative state', async () => {
   const f = fixture(), before = await f.access.read()
   f.values.set('a', { draft: '手改', draftRev: 2, phase: 'plain' })

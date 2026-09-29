@@ -13,7 +13,8 @@ import { EndpointDiscovery } from '../../src/host/endpoint-discovery.mjs'
 import { PLUGIN_VERSION } from '../../src/shared/state.mjs'
 
 test('both modes default to the public trial address and retain explicit overrides', () => {
-  assert.equal(new URL(DEFAULT_DUET_URL).hostname, 'duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com')
+  assert.equal(new URL(DEFAULT_DUET_URL).hostname, 'duet-router-acc.router.dsh-duet.com')
+  assert.equal(new URL(DEFAULT_DUET_URL).protocol, 'wss:')
   assert.deepEqual(duetConfig({}).endpoints, { online: DEFAULT_DUET_URL, tts_only: DEFAULT_DUET_URL })
   assert.ok(duetConfig({}).authorization)
   assert.equal(duetConfig({ DUET_AUTHORIZATION: 'ignored', DUPLEX_VOICE_AUTHORIZATION: 'also-ignored' }).authorization, duetConfig({}).authorization)
@@ -56,6 +57,22 @@ async function fixture(t, rejectStatus, overrides = {}) {
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+test('a long result does not close broadcast or block the next notification', {timeout:5000}, async t => {
+  const f = await fixture(t), ws = await begin(f, 'tts_only')
+  for (const [id, text] of [['long', '字'.repeat(8001)], ['next', '下一项已完成']]) {
+    const received = next(ws)
+    ws.send(JSON.stringify({type:'external_message', message_id:id, text,
+      source:{session_id:'s1',session_name:'工作',job_id:id,status:'completed'}}))
+    assert.equal((await received).message_id, id)
+    assert.equal(ws.readyState, WebSocket.OPEN)
+  }
+  const notifications = f.messages.filter(m => m.type === 'external_message')
+  assert.equal(notifications.length, 2)
+  assert.match(notifications[0].text, /内容较长/)
+  assert.equal(notifications[1].text, '下一项已完成')
+  assert.equal(f.connections.length, 1)
+  ws.close(); await once(ws, 'close')
+})
 test('online and broadcast send the same session diagnostic schema',async t=>{
   const values=[]
   for(const mode of ['online','tts_only']){

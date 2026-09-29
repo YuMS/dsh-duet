@@ -6,19 +6,74 @@ import { tmpdir } from 'node:os'
 import { DuetSettings, validateBackendURL, settingsWriteAllowed } from '../../src/host/settings.mjs'
 import { ServiceNotices } from '../../src/host/notices.mjs'
 import { duetConfig } from '../../src/host/proxy.mjs'
-import { DEFAULT_DUET_URL, PUBLIC_TRIAL_GATEWAY_URL, PUBLIC_TRIAL_AUTHORIZATION, publicServiceAuthorization } from '../../src/host/service-defaults.mjs'
+import { migrateRetiredSettings } from '../../src/host/settings-migration.mjs'
+import { DEFAULT_DUET_URL, PUBLIC_TRIAL_AUTHORIZATION, publicServiceAuthorization } from '../../src/host/service-defaults.mjs'
 
-test('the approved gateway accepts a copied HTTP address and uses bundled auth', async t => {
+test('HTTPS default retains public trial authentication after saving and reloading', async t => {
   const s = await fixture(t)
-  const address = new URL(PUBLIC_TRIAL_GATEWAY_URL)
-  await s.save({ revision: 0, backend_url: `http://${address.host}/` })
-  assert.equal(s.public().backend_url, PUBLIC_TRIAL_GATEWAY_URL)
+  await s.save({ revision: 0, backend_url: 'https://duet-router-acc.router.dsh-duet.com/' })
+  assert.equal(s.public().backend_url, DEFAULT_DUET_URL)
   assert.equal(s.effective().authorization, PUBLIC_TRIAL_AUTHORIZATION)
-  const reloaded = new DuetSettings(s.base, { path: s.path })
-  assert.equal(reloaded.effective().authorization, PUBLIC_TRIAL_AUTHORIZATION)
-  assert.ok(!JSON.stringify(s.public()).includes(PUBLIC_TRIAL_AUTHORIZATION))
-  await assert.rejects(s.save({ revision: 1, backend_url: `http://${address.host}.evil.test/` }), /requires_wss/)
-  await assert.rejects(s.save({ revision: 1, backend_url: `http://${address.host}/other` }), /requires_wss/)
+  const restored = new DuetSettings(s.base, { path: s.path })
+  assert.equal(restored.effective().authorization, PUBLIC_TRIAL_AUTHORIZATION)
+})
+
+test('the retired default is no longer a built-in public service', async t => {
+  const s = await fixture(t)
+  const retired = 'ws://duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com/ws?protocol=realtime_v2'
+  assert.equal(publicServiceAuthorization({ online: retired, tts_only: retired }), '')
+  await assert.rejects(s.save({ revision: 0, backend_url: retired }), /requires_wss/)
+})
+
+test('saved retired endpoints migrate once to HTTPS without retaining credentials or plaintext opt-in', async t => {
+  for (const host of [
+    'duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com',
+    'duet-router-acc.gw-bmmaj5gve68z3gw34o.ap-southeast-1.pai-eas.aliyuncs.com',
+  ]) for (const explicit of [false, true]) {
+    const s = await fixture(t)
+    const old = `ws://${host}/ws?protocol=realtime_v2`
+    await writeFile(s.path, JSON.stringify({ backend_url: old, auth_token: 'obsolete-fixture',
+      ...(explicit ? { insecure_origin: new URL(old).origin } : {}) }))
+    const restored = new DuetSettings(s.base, { path: s.path })
+    assert.equal(restored.public().backend_url, DEFAULT_DUET_URL)
+    assert.equal(restored.public().insecure_transport, false)
+    assert.equal(restored.effective().authorization, PUBLIC_TRIAL_AUTHORIZATION)
+    assert.deepEqual(JSON.parse(await readFile(s.path, 'utf8')), { backend_url: DEFAULT_DUET_URL })
+    assert.equal((await stat(s.path)).mode & 0o777, 0o600)
+    assert.equal(new DuetSettings(s.base, { path: s.path }).public().backend_url, DEFAULT_DUET_URL)
+  }
+})
+
+test('saved custom addresses and retired-host lookalikes are never migrated', async t => {
+  for (const url of ['wss://custom.example/ws',
+    'wss://duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com.evil.example/ws',
+    'wss://duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com/custom']) {
+    const s = await fixture(t)
+    const original = JSON.stringify({ backend_url: url })
+    await writeFile(s.path, original)
+    const restored = new DuetSettings(s.base, { path: s.path })
+    assert.equal(restored.public().backend_url, url)
+    assert.equal(restored.effective().authorization, '')
+    assert.equal(await readFile(s.path, 'utf8'), original)
+  }
+})
+
+test('a migration persistence failure still uses the safe default without touching the old config', async t => {
+  const s = await fixture(t)
+  const data = { backend_url: 'ws://duet-router.1781574661016173.ap-southeast-1.pai-eas.aliyuncs.com/ws?protocol=realtime_v2' }
+  // The parent directory does not exist, so the atomic temp write fails.
+  const next = migrateRetiredSettings(data, join(s.path, 'missing', 'voice.json'))
+  assert.deepEqual(next, {backend_url:DEFAULT_DUET_URL})
+  assert.notEqual(data.backend_url, next.backend_url)
+  assert.equal(publicServiceAuthorization({online:next.backend_url,tts_only:next.backend_url}), PUBLIC_TRIAL_AUTHORIZATION)
+})
+
+test('the retired gateway no longer receives bundled auth or a plaintext exception', async t => {
+  const s = await fixture(t)
+  const retired = 'ws://duet-router-acc.gw-bmmaj5gve68z3gw34o.ap-southeast-1.pai-eas.aliyuncs.com/ws?protocol=realtime_v2'
+  assert.equal(publicServiceAuthorization({ online: retired, tts_only: retired }), '')
+  await assert.rejects(s.save({ revision: 0, backend_url: retired }), /requires_wss/)
+  await assert.rejects(s.save({ revision: 0, backend_url: `http://${new URL(retired).host}/` }), /requires_wss/)
 })
 
 test('HTTPS base URLs normalize without copying authentication to another service', async t => {

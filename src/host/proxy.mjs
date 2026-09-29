@@ -6,6 +6,8 @@ import { duetEnv } from './environment.mjs'
 import { EndpointDiscovery, connectEndpoint } from './endpoint-discovery.mjs'
 import {sessionMetadata} from './session-metadata.mjs'
 import {VOICE_PROTOCOL} from '../shared/identity.mjs'
+import { broadcastText } from '../shared/result-notification.mjs'
+import { sessionLabel } from '../shared/catalog.mjs'
 import { DEFAULT_DUET_URL, publicServiceAuthorization } from './service-defaults.mjs'
 export { DEFAULT_DUET_URL } from './service-defaults.mjs'
 const require = createRequire(import.meta.url)
@@ -34,8 +36,7 @@ export function duetConfig(env = process.env) {
 export function externalWithState(message, _state) {
   if (message.type !== 'external_message' || typeof message.text !== 'string') throw new Error('invalid_external_message')
   // Keep authoritative result metadata separate from result text and UI state.
-  const text = message.text
-  if (text.length > 8000) throw new Error('external_message_too_large')
+  const text = broadcastText(message.text)
   const source = message.source
   if (source !== undefined) {
     const limits = { session_id: 256, session_name: 512, job_id: 256, status: 16 }
@@ -45,7 +46,7 @@ export function externalWithState(message, _state) {
         !['completed', 'failed'].includes(source.status)) throw new Error('invalid_external_message_source')
   }
   return { type: 'external_message', message_id: message.message_id, text,
-    ...(source === undefined ? {} : { source: { ...source } }) }
+    ...(source === undefined ? {} : { source: { ...source, session_name: sessionLabel(source.session_name, source.session_id) } }) }
 }
 
 export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, canUseVoice = () => true, discovery = new EndpointDiscovery(() => config)) {

@@ -1,6 +1,7 @@
 /** Explicit public asset inventory. Host code and configuration are never served. */
 const modules = {
   state: 'shared/state', catalog: 'shared/catalog',
+  result_notification: 'shared/result-notification',
   connection_guidance: 'shared/connection-guidance',
   audio: 'client/audio', microphone: 'client/microphone', shortcuts: 'client/shortcuts',
   browser: 'client/browser', rpc: 'client/rpc', composer: 'client/composer',

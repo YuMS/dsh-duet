@@ -42,4 +42,5 @@ test('browser catalog uses live timestamps, archive state, and focus instead of 
     workspaces: { list: { getSnapshot: () => ({ archivedSessionIds: ['recent'] }) } },
   }
   assert.deepEqual(ids(browserSessionCatalog(ctx, rows)), ['old'])
+  assert.equal(browserSessionCatalog(ctx, [{...rows[0], label:'old'}])[0].label, '未命名会话')
 })

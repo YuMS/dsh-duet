@@ -51,6 +51,10 @@ test('recorded malformed answer_question error is nonfatal; genuine transport fa
   assert.equal(f.state.ready, true)
   assert.match(f.notices.at(-1), /未执行/)
   assert.deepEqual(c.messages, []) // no invented correction or automatic mutation retry
+  c.receive({ type: 'warning', warning: { code: 'malformed_dense_action' } })
+  assert.equal(f.state.mode, 'online')
+  assert.match(f.notices.at(-1), /未执行/)
+  assert.deepEqual(c.messages, [])
   c.receive({ type: 'error', code: 'voice_disconnected' })
   await flush()
   assert.equal(f.state.mode, 'off')

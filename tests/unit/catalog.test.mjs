@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {buildSessionCatalog, orderSessionCatalog, WORKSPACE_VIEW_KEY} from '../../src/shared/catalog.mjs'
+import {buildSessionCatalog, orderSessionCatalog, WORKSPACE_VIEW_KEY, sessionLabel} from '../../src/shared/catalog.mjs'
 import {HarnessRPCExecutor} from '../../src/client/rpc.mjs'
 
 const ids = rows => rows.map(row=>row.session_id)
+test('untitled sessions retain routing IDs but never use them as spoken names', () => {
+  for (const title of [undefined, '', '  ', 'opaque-id']) {
+    const row = buildSessionCatalog([{sessionId:'opaque-id',projections:{values:{title}}}])[0]
+    assert.equal(row.session_id, 'opaque-id')
+    assert.equal(row.label, '未命名会话')
+  }
+  assert.equal(sessionLabel(' 工作计划 ', 'opaque-id'), '工作计划')
+})
 const items = [
   {sessionId:'newer',updatedAt:300}, {sessionId:'archived',updatedAt:400},
   {sessionId:'hahas',updatedAt:10}, {sessionId:'empty',blank:true},

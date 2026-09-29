@@ -1,20 +1,22 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.6'
-import { DuetAudio } from './audio.mjs?v=0.1.6'
-import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.1.6'
-import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.6'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.1.6'
-import { mountTutorial } from './tutorial.mjs?v=0.1.6'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.6'
-import { mountRating } from './feedback.mjs?v=0.1.6'
-import { createAudioUploadConsent } from './consent.mjs?v=0.1.6'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.6'
-import { nativeInteractions } from './interactions.mjs?v=0.1.6'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.1.6'
-import { mountControlsLayout } from './controls-layout.mjs?v=0.1.6'
-import { mountNotice } from './notice.mjs?v=0.1.6'
-import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.1.6'
-import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.6'
-import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.1.6'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.7'
+import { DuetAudio } from './audio.mjs?v=0.1.7'
+import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.1.7'
+import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.7'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.1.7'
+import { mountTutorial } from './tutorial.mjs?v=0.1.7'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.7'
+import { mountRating } from './feedback.mjs?v=0.1.7'
+import { createAudioUploadConsent } from './consent.mjs?v=0.1.7'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.7'
+import { nativeInteractions } from './interactions.mjs?v=0.1.7'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.1.7'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.1.7'
+import { mountNotice } from './notice.mjs?v=0.1.7'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.1.7'
+import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.7'
+import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.1.7'
+import { sessionLabel } from '../shared/catalog.mjs?v=0.1.7'
+import { resultNotification } from '../shared/result-notification.mjs?v=0.1.7'
 
 export function mountDuet(ctx) {
   const pageId = crypto.randomUUID()
@@ -86,7 +88,7 @@ export function mountDuet(ctx) {
       if (ws.bufferedAmount > 1_000_000) { receive({ type: 'error', code: 'voice_backpressure' }); return }
       ws.send(message instanceof ArrayBuffer ? message : JSON.stringify(message))
     }
-    const composer = composerAccess(ctx, id => labels.get(id) || id)
+    const composer = composerAccess(ctx, id => sessionLabel(labels.get(id), id))
     const interactions = nativeInteractions(ctx)
     const rpc = new HarnessRPCExecutor(send, fetch, report, async (request, signal) =>
       (await interactions(request, signal)) ?? composer.execute(request, signal), rows =>
@@ -327,18 +329,13 @@ export function mountDuet(ctx) {
       const id = focusedSession(ctx)
       const scope = id ? ctx.sessions.scope(id) : undefined
       if (scope) {
-        try { composer = { session_name: labels.get(id) || id, text: ctx.conversation.input.for(scope).state.getSnapshot().draft } } catch { /* Session input is still mounting; do not invent an empty draft. */ }
+        try { composer = { session_name: sessionLabel(labels.get(id), id), text: ctx.conversation.input.for(scope).state.getSnapshot().draft } } catch { /* Session input is still mounting; do not invent an empty draft. */ }
       }
       state.update({
         hidden: document.visibilityState !== 'visible',
         running: catalog.sessions.some(s => s.running),
         state: { focused_session_id: id || null, ...(composer ? { composer_state: composer } : {}), sessions: catalog.sessions.map(s => ({ session_id: s.session_id, session_name: s.label, running: s.running })) },
-        results: bootstrap ? [] : completed.results.map(job => ({
-          type: 'external_message', message_id: `harness_${job.id}`,
-          source: { session_id: job.session_id, session_name: labels.get(job.session_id) || job.session_id,
-            job_id: job.id, status: job.status === 'succeeded' ? 'completed' : 'failed' },
-          text: (job.status === 'succeeded' ? job.result : (job.error || job.result)) || '未返回结果。',
-        })),
+        results: bootstrap ? [] : completed.results.map(job => resultNotification(job, labels.get(job.session_id))),
       })
       resultEpoch = health.focus_epoch
       cursor = bootstrap ? completed.current_cursor : completed.next_cursor

@@ -1,6 +1,11 @@
 /** Mirror DSH workspace order, never the global activity-sorted search list. */
 export const WORKSPACE_VIEW_KEY = 'dsh.workspace.view.v5'
 
+export function sessionLabel(name, id) {
+  const text = typeof name === 'string' ? name.trim() : ''
+  return text && text !== id ? text : '未命名会话'
+}
+
 export function readWorkspaceView() {
   try { return JSON.parse(globalThis.localStorage?.getItem(WORKSPACE_VIEW_KEY) || '{}') || {} }
   catch { return {} }
@@ -54,7 +59,7 @@ export function buildSessionCatalog(items, {workspaces = [], archivedIds = [], a
     const item = byId.get(id)
     if (!item) return
     byId.delete(id)
-    result.push({session_id:id, label:item.projections?.values?.title || id,
+    result.push({session_id:id, label:sessionLabel(item.projections?.values?.title, id),
       active:id === activeId, running:item.running, updated_at:item.updatedAt,
       cwd:item.cwd || '', workspace_id:workspaceId, archived:false,
       blank:!!item.blank, origin:item.origin})
