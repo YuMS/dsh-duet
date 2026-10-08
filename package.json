@@ -22,7 +22,7 @@
   "scripts": {
     "test": "node scripts/test.mjs",
     "check": "node scripts/check-package.mjs",
-    "test:browser": "node tests/browser/settings.mjs && node tests/browser/tutorial.mjs && node tests/browser/feedback.mjs && node tests/browser/connection-hint.mjs && node tests/browser/resilience.mjs && node tests/browser/page-binding.mjs && node tests/browser/desktop-settings.mjs && node tests/browser/desktop-identity.mjs",
+    "test:browser": "node tests/browser/settings.mjs && node tests/browser/tutorial.mjs && node tests/browser/feedback.mjs && node tests/browser/connection-hint.mjs && node tests/browser/controls-layout.mjs && node tests/browser/resilience.mjs && node tests/browser/page-binding.mjs && node tests/browser/desktop-settings.mjs && node tests/browser/desktop-identity.mjs",
     "test:host": "node tests/host/isolated-host.mjs",
     "prepack": "npm run check"
   },

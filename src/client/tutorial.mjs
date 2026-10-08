@@ -142,6 +142,7 @@ export function mountTutorial({ controls, adapter }) {
     }
   }
   const dismiss = async (forever=false) => {
+    controls.dispatchEvent(new CustomEvent('duet:reveal-controls',{detail:false}))
     closed = true; put(sessionStorage,TUTORIAL_KEY,'closed'); if (forever) put(localStorage,TUTORIAL_KEY,'dismissed')
     panel?.remove(); panel=null; highlight?.remove(); highlight=null; pointer?.remove();pointer=null
     await run?.stop(); active=false; lockRelease?.(); lockRelease=null
@@ -154,6 +155,7 @@ export function mountTutorial({ controls, adapter }) {
     if(closed)return
     panel?.remove(); highlight?.remove();pointer?.remove();pointer=null
     targetSelector = selector || '#dsh-duet-controls'
+    controls.dispatchEvent(new CustomEvent('duet:reveal-controls',{detail:Boolean(selector?.startsWith('[data-voice='))}))
     target = document.querySelector(targetSelector) || controls
     highlight = element('div',null,document.body); highlight.className='duet-tutorial-highlight'; highlight.setAttribute('aria-hidden','true')
     highlight.dataset.target=targetSelector

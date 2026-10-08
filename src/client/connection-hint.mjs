@@ -19,7 +19,8 @@ export function mountConnectionHint(controls, { duration = 8000, onShown = ()=>{
   const position = () => {
     if (hint.hidden || disposed) return
     if (!controls.isConnected) { hide(); return }
-    const button = controls.querySelector('[data-voice=mic]') || controls
+    const mic = controls.querySelector('[data-voice=mic]')
+    const button = mic?.getClientRects().length ? mic : controls.querySelector('#dsh-duet-entry') || controls
     const rect = button.getBoundingClientRect(), width = hint.offsetWidth, height = hint.offsetHeight
     const left = Math.max(16, Math.min(rect.left, innerWidth - width - 16))
     const above = rect.top >= height + 26

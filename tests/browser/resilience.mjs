@@ -25,10 +25,10 @@ try {
     </script>`})
   })
   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message))
-  await page.clock.install();await page.goto('http://127.0.0.1:19361/');await page.locator('[data-voice=speaker]').waitFor()
+  await page.clock.install();await page.goto('http://127.0.0.1:19361/');await page.locator('#dsh-duet-entry').waitFor()
   const mode=()=>page.locator('#dsh-duet-controls').getAttribute('data-mode')
   const step=async ms=>{await page.clock.runFor(ms);await page.waitForTimeout(30)}
-  await page.evaluate(()=>{hasWorkspace=false});await page.locator('[data-voice=speaker]').click()
+  await page.evaluate(()=>{hasWorkspace=false});await page.locator('#dsh-duet-entry').hover();await page.locator('[data-voice=speaker]').click()
   const notice=page.locator('[data-duet-notice]');assert.match(await notice.innerText(),/创建 workspace/)
   assert.equal(await notice.evaluate(e=>e.parentElement===document.body),true)
   const box=await notice.boundingBox();assert.ok(box.x>=12&&box.x+box.width<=788&&box.y>=12&&box.y+box.height<=588)
@@ -37,20 +37,20 @@ try {
   assert.ok(pollRequests-beforeIdle<=3,'off mode should poll at most every 5 seconds')
   const beforeEvent=pollRequests;await page.evaluate(()=>listeners.forEach(f=>f()));await step(1000);await step(1000)
   assert.ok(pollRequests>beforeEvent,'DSH state change should wake polling')
-  configHang=true;await page.locator('[data-voice=speaker]').click()
+  configHang=true;await page.locator('#dsh-duet-entry').hover();await page.locator('[data-voice=speaker]').click()
   while(configRequests<1)await page.waitForTimeout(10)
-  await page.locator('[data-voice=speaker]').click();configHang=false
-  await page.locator('[data-voice=speaker]').click();await step(100)
+  await page.locator('#dsh-duet-entry').hover();await page.locator('[data-voice=speaker]').click();configHang=false
+  await page.locator('#dsh-duet-entry').hover();await page.locator('[data-voice=speaker]').click();await step(100)
   await page.waitForFunction(()=>document.querySelector('[data-voice=speaker]').getAttribute('aria-busy')==='false')
   assert.equal(await mode(),'tts_only','cancelled fetch must not keep the voice lock')
   pollFail=true;await step(1100);assert.equal(await mode(),'tts_only','one 503 must not close voice')
   pollFail=false;await step(1100);assert.equal(await mode(),'tts_only')
   pollFail=true;for(let i=0;i<18;i++)await step(1000)
   assert.equal(await mode(),'off','sustained sync failure must terminate safely');pollFail=false
-  configHang=true;await page.locator('[data-voice=speaker]').click();await step(11000)
+  configHang=true;await page.locator('#dsh-duet-entry').hover();await page.locator('[data-voice=speaker]').click();await step(11000)
   await page.waitForFunction(()=>document.querySelector('#dsh-duet-controls').dataset.mode==='off')
   assert.match(await notice.innerText(),/连接超时/);configHang=false
-  await page.locator('[data-voice=mic]').click();await step(100)
+  await page.locator('#dsh-duet-entry').hover();await page.locator('[data-voice=mic]').click();await step(100)
   await page.waitForFunction(()=>Boolean(window.captureFailed))
   assert.equal(await mode(),'online')
   await page.evaluate(()=>captureFailed('microphone_disconnected'))
