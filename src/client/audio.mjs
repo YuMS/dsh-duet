@@ -1,4 +1,4 @@
-import { microphoneConstraints } from './microphone.mjs?v=0.1.8'
+import { microphoneConstraints } from './microphone.mjs?v=0.1.9'
 
 /** Browser-owned microphone and PCM playback. No microphone is requested in tts_only. */
 export class DuetAudio {
@@ -37,10 +37,11 @@ export class DuetAudio {
     }
   }
 
-  async startMic(send, onFailure = () => {}) {
+  async startMic(send, onFailure = () => {}, report = () => {}) {
     const epoch = this.epoch
     // Exact selection: an unplugged device must not silently use a different mic.
     const stream = await navigator.mediaDevices.getUserMedia(microphoneConstraints())
+    report({event:'browser.microphone_granted'})
     if (epoch !== this.epoch) { stream.getTracks().forEach(t => t.stop()); return }
     this.stream = stream
     let failed = false
@@ -93,6 +94,7 @@ export class DuetAudio {
     this.mute = this.context.createGain()
     this.mute.gain.value = 0
     this.source.connect(this.capture).connect(this.mute).connect(this.context.destination)
+    report({event:'browser.capture_started'})
   }
 
   event(event, send) {

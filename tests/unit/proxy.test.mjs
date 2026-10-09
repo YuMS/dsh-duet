@@ -26,7 +26,13 @@ test('both modes default to the public trial address and retain explicit overrid
 async function fixture(t, rejectStatus, overrides = {}) {
   const upstream = http.createServer()
   const wss = new WebSocketServer({ noServer: true })
-  const connections = [], messages = [], headers = []
+  const connections = [], messages = [], headers = [], diagnosticUploads = []
+  upstream.on('request', (req,res)=>{
+    if(req.url!=='/client-diagnostics'){res.writeHead(404).end();return}
+    let body='';req.on('data',c=>body+=c);req.on('end',()=>{
+      diagnosticUploads.push(JSON.parse(body));res.writeHead(200,{'Content-Type':'application/json'}).end('{"persisted":true}')
+    })
+  })
   upstream.on('upgrade', (req, socket, head) => {
     headers.push(req.headers)
     if (rejectStatus) { socket.end(`HTTP/1.1 ${rejectStatus} Busy\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); return }
@@ -35,6 +41,7 @@ async function fixture(t, rejectStatus, overrides = {}) {
       ws.on('message', (raw, binary) => {
         const value = binary ? raw : JSON.parse(raw)
         messages.push(value)
+        if(value.type==='session.update'&&overrides.diagnostics!==false)ws.send(JSON.stringify({type:'client.diagnostics.ready',protocol:'client_diagnostics_v1',ticket:'test-ticket'}))
         if (value.type === 'session.update') ws.send(JSON.stringify({ type: 'session.created', ...(overrides.resultPush ? {harness_sync:{protocol:'harness_sync_v1',connection_id:'a'.repeat(32),cursor:64,epoch:'fixture'}} : {}), connection_hint_reporting:overrides.hintReporting===true, session: { id:'voice-from-upstream', config: { harness_control_transport: 'client_rpc_v1', external_message_protocol: overrides.resultProtocol === false ? undefined : 'harness_result_v2' } } }))
         if(value.type==='harness.sync.subscribe') ws.send(JSON.stringify({type:'harness.sync.ready',connection_id:value.connection_id}))
         if(value.type==='harness.sync.push') ws.send(JSON.stringify({type:'harness.sync.ack',connection_id:value.connection_id,event_id:value.event_id,accepted:true}))
@@ -53,12 +60,33 @@ async function fixture(t, rejectStatus, overrides = {}) {
     wss.close()
     await Promise.all([new Promise(r => host.close(r)), new Promise(r => upstream.close(r))])
   })
-  return { connections, messages, headers, connect(mode = 'tts_only', version = '0.1.0', protocols) {
+  return { connections, messages, headers, diagnosticUploads, connect(mode = 'tts_only', version = '0.1.0', protocols) {
     return new WebSocket(`ws://127.0.0.1:${host.address().port}/duplex-control/voice/ws?mode=${mode}&plugin_version=${version}`, protocols)
   } }
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+test('diagnostics are uploaded after close and never forwarded to workers',async t=>{
+  for(const mode of ['online','tts_only']){
+    const f=await fixture(t,null,{diagnostics:true}),ws=await begin(f,mode)
+    ws.send(JSON.stringify({type:'client.diagnostic',event:'browser.connection_close',event_id:'close',reason:'user_off',message:'private'}))
+    ws.close(1000);await once(ws,'close')
+    for(let i=0;i<50&&!f.diagnosticUploads.some(b=>b.events.some(e=>e.event==='proxy.browser_closed'));i++)await new Promise(r=>setTimeout(r,20))
+    const rows=f.diagnosticUploads.flatMap(b=>b.events)
+    assert.ok(rows.some(e=>e.event==='browser.connection_close'&&e.reason==='user_off'))
+    assert.ok(rows.some(e=>e.event==='proxy.browser_closed'&&e.code===1000))
+    assert.equal(JSON.stringify(rows).includes('private'),false)
+    assert.ok(rows.every(e=>e.host_version===PLUGIN_VERSION&&e.mode===mode))
+    assert.equal(f.messages.some(e=>e.type==='client.diagnostic'),false)
+  }
+})
+test('missing required diagnostic handshake rejects outdated server explicitly',async t=>{
+  const old=await fixture(t,null,{diagnostics:false}),ws=old.connect('online')
+  await once(ws,'open');const result=next(ws)
+  ws.send(JSON.stringify({type:'session.update'}))
+  assert.equal((await result).error.code,'voice_server_upgrade_required')
+  await once(ws,'close');assert.equal(old.diagnosticUploads.length,0)
+})
 test('negotiated result events traverse proxy while old servers never receive unsolicited pushes', async t => {
   const f=await fixture(t,null,{resultPush:true}),ws=await begin(f,'online')
   const ready=next(ws)
@@ -206,7 +234,7 @@ test('tts_only freezes wire mode, buffers state without inference, forwards only
   assert.equal(connection_route.selection,'custom')
   assert.match(connection_route.selected_endpoint,/^ws:\/\/127\.0\.0\.1:/)
   assert.deepEqual(client, { name: 'dsh-duet', version: '0.1.0', protocol_major: 1,
-    metadata_version:'duet_session_v1',mode:'tts_only',
+    metadata_version:'duet_session_v1',mode:'tts_only',diagnostics_protocol:'client_diagnostics_v1',
     host_version: PLUGIN_VERSION, page_binding: 'connection_owner_v1', client_trace_id: client.client_trace_id, page_id: '' })
   assert.match(client.client_trace_id,/^[a-f0-9-]{36}$/)
   ws.send(JSON.stringify({ type: 'harness.state', state: { focused_session_id: 's1' } }))

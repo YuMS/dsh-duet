@@ -254,6 +254,17 @@ async function nextComposerRequest(request) {
   throw new Error('composer request did not appear')
 }
 
+test('serialized DSH turn errors preserve their message in the completion feed', async () => {
+  const {request,emitSession}=makeHarness()
+  emitSession('turn/start',{turn:9})
+  emitSession('user/message',{source:{kind:'user',rpcId:'error-fixture'},content:[{type:'text',text:'测试'}]})
+  emitSession('turn/end',{turn:9,reason:{kind:'error',error:{message:'模型服务暂时不可用',code:'UNKNOWN'}}})
+  const {body}=await request('GET','/duplex-control/api/results?after=0')
+  assert.equal(body.results.length,1)
+  assert.equal(body.results[0].status,'failed')
+  assert.equal(body.results[0].error,'模型服务暂时不可用')
+})
+
 async function completeComposerRequest(request, candidate, composer) {
   const claimed = await request(
     'POST',

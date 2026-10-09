@@ -15,7 +15,11 @@ duet，意为「二重奏」。这里的 duet 使用全双工语音模型，可�
 
 ## 安装
 
-已验证兼容 DSH `0.1.5-rc.2` 和 `0.1.6-alpha.2`。
+支持 DSH Web 和 Desktop。当前版本已通过 DSH `0.2.0-rc.1` 的 Web 集成测试。
+
+### Web
+
+需要 Node.js 22 LTS（22.19.0 起）或 24 及以上版本。
 
 安装并打开 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：
 
@@ -31,12 +35,21 @@ dsh plugin --profile web add dsh-duet
 dsh web
 ```
 
-也支持 DSH 的 GitHub 插件安装方式：`dsh plugin --profile web add github:YuMS/dsh-duet`。
-两种方式任选其一。
+### Desktop
+
+在 DSH Desktop 的插件管理页面选择“添加插件”，输入 `dsh-duet` 并安装。
+安装后若未出现 duet 按钮，退出并重新打开 DSH Desktop。
+
+### 更新
+
+Web 用户重新运行 `dsh plugin --profile web add dsh-duet@latest`，然后重启 DSH。
+Desktop 用户在插件管理页面更新。
 
 ## 使用
 
 duet 支持两种模式。
+
+使用前，请先在 DSH 中创建或选择一个 workspace。
 
 | 按钮 | 模式 | 用途 |
 | --- | --- | --- |

@@ -1,24 +1,25 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.8'
-import { DuetAudio } from './audio.mjs?v=0.1.8'
-import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.1.8'
-import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.8'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.1.8'
-import { mountTutorial } from './tutorial.mjs?v=0.1.8'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.8'
-import { mountRating } from './feedback.mjs?v=0.1.8'
-import { createAudioUploadConsent } from './consent.mjs?v=0.1.8'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.8'
-import { nativeInteractions } from './interactions.mjs?v=0.1.8'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.1.8'
-import { mountControlsLayout } from './controls-layout.mjs?v=0.1.8'
-import { mountNotice } from './notice.mjs?v=0.1.8'
-import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.1.8'
-import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.8'
-import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.1.8'
-import { sessionLabel } from '../shared/catalog.mjs?v=0.1.8'
-import { resultNotification } from '../shared/result-notification.mjs?v=0.1.8'
-import { HarnessSync } from './harness-sync.mjs?v=0.1.8'
-import { LocalSync } from './local-sync.mjs?v=0.1.8'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.9'
+import { DuetAudio } from './audio.mjs?v=0.1.9'
+import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.1.9'
+import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.9'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.1.9'
+import { mountTutorial } from './tutorial.mjs?v=0.1.9'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.9'
+import { mountRating } from './feedback.mjs?v=0.1.9'
+import { createAudioUploadConsent } from './consent.mjs?v=0.1.9'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.9'
+import { nativeInteractions } from './interactions.mjs?v=0.1.9'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.1.9'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.1.9'
+import { mountNotice } from './notice.mjs?v=0.1.9'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.1.9'
+import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.9'
+import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.1.9'
+import { sessionLabel } from '../shared/catalog.mjs?v=0.1.9'
+import { resultNotification } from '../shared/result-notification.mjs?v=0.1.9'
+import { HarnessSync } from './harness-sync.mjs?v=0.1.9'
+import { LocalSync } from './local-sync.mjs?v=0.1.9'
+import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.1.9'
 
 export function mountDuet(ctx) {
   const pageId = crypto.randomUUID()
@@ -34,12 +35,12 @@ export function mountDuet(ctx) {
   let connectionGuidance = null, reportHintShown = null
   let tutorial, teaching, ratingPanel, connectionHint, stopControlsLayout, stopSettings
   const diagnostic = data => {
-    if (++diagnosticCount > 100) return
+    if (++diagnosticCount > 100 && !diagnosticPayload(data)) return
     const bounded = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 4000) : v]))
     const body = JSON.stringify({ client_trace_id: clientTraceId, plugin_version: PLUGIN_VERSION, page_id: pageId,
       utc: new Date().toISOString(), visibility: document.visibilityState, ...bounded })
     if (body.length > 24000) return
-    void fetch('/duplex-control/api/voice/diagnostic', { method: 'POST', credentials: 'same-origin',
+    void identityFetch('/duplex-control/api/voice/diagnostic', { method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-Duplex-Settings': '1' }, body, keepalive: true }).catch(() => {})
   }
   const pageError = event => diagnostic({ event: 'browser.error', message: String(event.message || event.reason?.message || event.reason), stack: event.error?.stack || event.reason?.stack })
@@ -81,7 +82,17 @@ export function mountDuet(ctx) {
     clientTraceId = crypto.randomUUID(); diagnosticCount = 0
     connectionGuidance = null; reportHintShown = null
     const connectionTraceId = clientTraceId
-    const report = data => diagnostic({ ...data, client_trace_id: connectionTraceId, mode })
+    const started = performance.now()
+    let firstInput = false
+    const report = data => {
+      const row = {...data, event_id:crypto.randomUUID(), client_trace_id:connectionTraceId,
+        page_id:pageId, plugin_version:PLUGIN_VERSION, mode, elapsed_ms:Math.round(performance.now()-started), visibility:document.visibilityState}
+      diagnostic(row)
+      const payload = diagnosticPayload(row)
+      if (payload && ws?.readyState === WebSocket.OPEN && !closed && ws.bufferedAmount < 100000) {
+        try { ws.send(JSON.stringify({type:'client.diagnostic', ...payload})) } catch { /* HTTP fallback remains best effort. */ }
+      }
+    }
     let ws, closed = false, release, ready = false, stopComposer, stopBridge
     const opening = new AbortController()
     const startupTimer = setTimeout(() => {
@@ -91,6 +102,9 @@ export function mountDuet(ctx) {
       if (ws?.readyState !== WebSocket.OPEN || closed) return
       if (ws.bufferedAmount > 1_000_000) { receive({ type: 'error', code: 'voice_backpressure' }); return }
       ws.send(message instanceof ArrayBuffer ? message : JSON.stringify(message))
+      if (message instanceof ArrayBuffer && !firstInput) {
+        firstInput = true; report({event:'browser.first_input_audio',bytes:message.byteLength})
+      }
     }
     const composer = composerAccess(ctx, id => sessionLabel(labels.get(id), id))
     const interactions = nativeInteractions(ctx)
@@ -115,11 +129,12 @@ export function mountDuet(ctx) {
     const connection = {
       resultPush,
       feedbackTicket: null,
+      report,
       send,
       sendState: state => { if (state) send({ type: 'harness.state', state }) },
       playing: () => audio.playing(),
-      async close() {
-        report({ event: 'browser.connection_close', buffered_bytes: ws?.bufferedAmount })
+      async close(details = {reason:'unknown'}) {
+        report({ event: 'browser.connection_close', ...details, buffered_bytes: ws?.bufferedAmount })
         // Explicit mode changes start a fresh listening window. An unexpected
         // socket close retains only this page's last acknowledged cursor.
         if (mode === 'online' && ws?.readyState === WebSocket.OPEN) {
@@ -138,7 +153,7 @@ export function mountDuet(ctx) {
           await new Promise(resolve => {
             const timer = setTimeout(resolve, 1200)
             ws.addEventListener('close', () => { clearTimeout(timer); resolve() }, { once: true })
-            if (ws.readyState < WebSocket.CLOSING) ws.close(1000)
+            if (ws.readyState < WebSocket.CLOSING) ws.close(1000, 'duet_client_close')
           })
         }
         release?.()
@@ -155,9 +170,9 @@ export function mountDuet(ctx) {
       requireWorkspace(ctx)
       if(closed)return
       if (mode === 'online') stopBridge = startComposerBridge(ctx, connectionTraceId, fetch, localSync)
-      report({ event: 'browser.connection_start', page_binding: 'connection_owner_v1' })
       ws = new WebSocket(voiceSocketUrl({ mode, plugin_version: PLUGIN_VERSION, client_trace_id: connectionTraceId, page_id: pageId }), identityVoiceProtocols())
       ws.onopen = () => {
+        report({ event: 'browser.connection_start', page_binding: 'connection_owner_v1' })
         send({ type: 'session.update' })
         if (mode === 'online') stopComposer = observeComposer(ctx, composer, send)
       }
@@ -190,14 +205,24 @@ export function mountDuet(ctx) {
             if (message.compatibility) receive({ type: 'compatibility', compatibility: message.compatibility })
             connection.feedbackTicket = message.feedback_session_ticket || null
             ready = true
-            await audio.prepare()
+            report({event:'browser.audio_prepare_started'})
+            try { await audio.prepare() }
+            catch (error) {
+              report({event:'browser.audio_prepare_failed',name:error?.name,phase:'audio_context',context_state:audio.context?.state})
+              throw error
+            }
             if (closed) return
             if (mode === 'online') {
+              let phase = 'permission'
+              report({event:'browser.microphone_started',phase})
               try { await audio.startMic(send, code => {
                 if (!closed) { report({event:'browser.capture_failed',code}); receive({type:'error',code}) }
+              }, event => {
+                if (event.event === 'browser.microphone_granted') phase = 'capture'
+                report(event)
               }) }
               catch (error) {
-                report({ event: 'browser.microphone_failed', name: error?.name })
+                report({ event: 'browser.microphone_failed', name: error?.name, phase })
                 if (!closed) receive({ type: 'error', code: 'microphone_unavailable' })
                 return
               }
@@ -239,13 +264,18 @@ export function mountDuet(ctx) {
         const held = new Promise(resolve => { release = resolve })
         // Opening may hang; ownership ends when close() releases it, not when
         // a fetch or browser permission request eventually resolves.
-        void open().catch(error => { if (!closed) receive({type:'error',code:opening.signal.aborted?'voice_start_timeout':error.message||'voice_connection_failed'}) })
+        void open().catch(error => { report({event:'browser.open_failed',name:error?.name,phase:'opening'}); if (!closed) receive({type:'error',code:opening.signal.aborted?'voice_start_timeout':error.message||'voice_connection_failed'}) })
         await held
       }).catch(() => { if (!closed) receive({ type: 'error', code: 'voice_connection_failed' }) })
     } else queueMicrotask(() => receive({ type: 'error', code: 'voice_lock_unavailable' }))
     return connection
   }
   const state = new DuetState({ connect, changed: draw, notice })
+  const pageHide = () => {
+    state.connection?.report({event:'browser.pagehide',reason:'page_unload'})
+    void state.setMode('off', {reason:'page_unload'})
+  }
+  window.addEventListener('pagehide', pageHide)
   const mount = () => {
     const entry = document.getElementById('dsh-duet-entry')
     if (!entry || document.getElementById('dsh-duet-controls')) return
@@ -422,6 +452,7 @@ export function mountDuet(ctx) {
   teachingObserver.observe(document.body, { subtree: true, childList: true })
   return () => {
     disposed = true
+    window.removeEventListener('pagehide', pageHide)
     pollController?.abort()
     unwatchSessions?.(); unwatchWorkspaces?.()
     localSync.close()

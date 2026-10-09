@@ -12,7 +12,7 @@ import { FeedbackService } from './feedback-store.mjs'
 import { RemoteFeedback } from './feedback-files.mjs'
 import { PLUGIN_VERSION } from '../shared/state.mjs'
 import { buildSessionCatalog, sessionLabel } from '../shared/catalog.mjs'
-import { broadcastText } from '../shared/result-notification.mjs'
+import { broadcastText, taskErrorText } from '../shared/result-notification.mjs'
 import { publicAsset } from './assets.mjs'
 import { duetEnv } from './environment.mjs'
 import { EndpointDiscovery } from './endpoint-discovery.mjs'
@@ -367,7 +367,7 @@ export function apply(ctx, options = {}) {
       }, hostAbort.signal)
     } catch (error) {
       job.status = 'failed'
-      job.error = error instanceof Error ? error.message : String(error)
+      job.error = taskErrorText(error)
       job.completed_at = nowSeconds()
       completionSequence += 1
       job.completion_seq = completionSequence
@@ -420,7 +420,7 @@ export function apply(ctx, options = {}) {
       job.error = 'Harness turn was aborted, not completed'
     } else if (event.data.reason?.kind === 'error') {
       job.status = 'failed'
-      job.error = String(event.data.reason.error || 'Harness turn failed')
+      job.error = taskErrorText(event.data.reason.error)
     } else if (!job.result) {
       job.status = 'failed'
       job.error = `Harness turn ended without a final text response (${event.data.reason?.kind || 'unknown'})`
@@ -540,10 +540,13 @@ export function apply(ctx, options = {}) {
       return
     }
     if (req.method === 'POST' && pathname === `${ROUTE}/api/voice/diagnostic`) {
-      if (!settingsWriteAllowed(req)) { sendError(res, 403, 'same-origin diagnostic request required'); return }
+      const rejection = ctx.connection.requestRejection(req)
+      if (rejection) { sendError(res, rejection, 'DSH connection required'); return }
+      if (!identityWriteAllowed(req)) { sendError(res, 403, 'same-origin diagnostic request required'); return }
       const body = await readJson(req)
       if (JSON.stringify(body).length > 24000) { sendError(res, 413, 'diagnostic too large'); return }
       audit.event('client.diagnostic', body)
+      try { duetProxy?.reportDiagnostic?.(req, body) } catch { /* Best effort only. */ }
       sendJson(res, 200, { ok: true, logging: audit.snapshot() }); return
     }
     if (req.method === 'GET' && pathname === `${ROUTE}/api/voice/service-info`) {

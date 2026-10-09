@@ -47,6 +47,7 @@ wss.on('connection', ws => {
     if(msg.type==='harness.sync.state')ws.send(JSON.stringify({type:'harness.sync.state_ack',connection_id:msg.connection_id,sequence:msg.sequence,accepted:true}))
     if(msg.type==='harness.sync.push')ws.send(JSON.stringify({type:'harness.sync.ack',connection_id:msg.connection_id,event_id:msg.event_id,accepted:true}))
     if (msg.type === 'session.update') {
+      ws.send(JSON.stringify({type:'client.diagnostics.ready',protocol:'client_diagnostics_v1',ticket:'fixture-ticket'}))
       session.mode = msg.session.io_mode
       if(session.mode==='online'&&!rejectBusy&&!rejectUpgrade){
         ws.send(JSON.stringify({type:'harness.rpc.request',connection_id:'a'.repeat(32),request_id:'f'.repeat(32),method:'GET',path:'/api/health'}));return

@@ -1,5 +1,5 @@
 import { IDENTITY_HEADER, IDENTITY_TRANSPORT_HEADER, IDENTITY_TRANSPORT, IDENTITY_STORAGE,
-  VOICE_PROTOCOL, IDENTITY_PROTOCOL_PREFIX, validIdentityToken } from '../shared/identity.mjs?v=0.1.8'
+  VOICE_PROTOCOL, IDENTITY_PROTOCOL_PREFIX, validIdentityToken } from '../shared/identity.mjs?v=0.1.9'
 
 /** Desktop strips plugin cookies. Keep the Host-signed value in its origin storage. */
 export function createIdentityClient(globals = globalThis) {

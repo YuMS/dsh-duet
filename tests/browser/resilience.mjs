@@ -6,11 +6,13 @@ const browser=await chromium.launch({headless:true,args:['--no-sandbox']})
 try {
   const context=await browser.newContext({viewport:{width:800,height:600}})
   let configHang=false,pollFail=false,configRequests=0,pollRequests=0
+  const diagnostics=[]
   await context.route('http://127.0.0.1:19361/**',async route=>{
     const path=new URL(route.request().url()).pathname
-    if(path==='/duet/assets/client/audio.mjs')return route.fulfill({contentType:'text/javascript',body:'export class DuetAudio {prepare(){return Promise.resolve()}startMic(send,failed){window.captureFailed=failed;return Promise.resolve()}stop(){}event(){}progress(){}playing(){return false}connectedChime(){}}'})
+    if(path==='/duet/assets/client/audio.mjs')return route.fulfill({contentType:'text/javascript',body:'export class DuetAudio {prepare(){return Promise.resolve()}startMic(send,failed,report){window.captureFailed=failed;report({event:"browser.microphone_granted"});report({event:"browser.capture_started"});send(new ArrayBuffer(2560));return Promise.resolve()}stop(){}event(){}progress(){}playing(){return false}connectedChime(){}}'})
     if(path.endsWith('.mjs'))return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.replace('/duet/assets/',''),import.meta.url),'utf8')})
     if(path.includes('/api/')){
+      if(path.endsWith('/voice/diagnostic'))diagnostics.push(route.request().postDataJSON())
       if(path.endsWith('/voice/config')){configRequests++;if(configHang)return}
       if(path.endsWith('/sessions')){pollRequests++;if(pollFail)return route.fulfill({status:503,json:{}})}
       const body=path.endsWith('/sessions')?{sessions:[]}:path.endsWith('/results')?{current_cursor:0,next_cursor:0,results:[]}:path.endsWith('/health')?{focus_epoch:'fixture'}:{}
@@ -56,6 +58,11 @@ try {
   await page.evaluate(()=>captureFailed('microphone_disconnected'))
   assert.equal(await mode(),'off');assert.match(await notice.innerText(),/麦克风已断开/)
   await page.evaluate(()=>dispose());assert.equal(await notice.count(),0)
+  await page.waitForTimeout(100)
+  for(const event of ['browser.audio_prepare_started','browser.microphone_started','browser.microphone_granted','browser.capture_started','browser.first_input_audio','browser.capture_failed'])assert.ok(diagnostics.some(d=>d.event===event),event)
+  assert.ok(diagnostics.some(d=>d.event==='browser.connection_close'&&d.reason==='error'&&d.code==='microphone_disconnected'))
+  assert.ok(diagnostics.some(d=>d.event==='browser.connection_close'&&d.reason==='user_off'))
+  assert.ok(diagnostics.filter(d=>d.event==='browser.first_input_audio').every(d=>d.bytes===2560&&d.elapsed_ms>=0))
   assert.deepEqual(errors,[])
   console.log('Resilience: cancelled startup, timeout, poll retry/recovery/failure, idle polling, event wake, capture fault, unclipped notices passed')
 }finally{await browser.close()}

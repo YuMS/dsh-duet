@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.1.8'
+export const PLUGIN_VERSION = '0.1.9'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
@@ -41,25 +41,26 @@ export class DuetState {
   toggleMic() { return this.setMode(this.mode === 'online' ? 'off' : 'online') }
   toggleSpeaker() { return this.setMode(this.mode === 'tts_only' ? 'off' : 'tts_only') }
 
-  async setMode(mode) {
+  async setMode(mode, details = {}) {
     if (!['off', 'tts_only', 'online'].includes(mode)) throw new Error('invalid_voice_mode')
     if (mode === this.mode && !this.suspended) return
+    const reason = details.reason || (mode === 'off' ? 'user_off' : 'mode_switch')
     this.mode = mode
     this.suspended = false
     this.idleSince = null
     if (mode === 'off') this.pending.clear()
     // Online notifications belong to the negotiated Harness stream (or legacy adapter).
     if (mode === 'online') this.pending.clear()
-    await this.replaceConnection()
+    await this.replaceConnection({...details, reason, mode_to:mode})
   }
 
-  async replaceConnection() {
+  async replaceConnection(details = {reason:'reconnect'}) {
     const generation = ++this.generation
     const previous = this.connection
     this.connection = null
     this.ready = false
     this.sent.clear()
-    if (previous) this.retiring = this.retiring.then(() => previous.close()).catch(() => {})
+    if (previous) this.retiring = this.retiring.then(() => previous.close(details)).catch(() => {})
     this.changed(this)
     await this.retiring
     if (generation !== this.generation || this.mode === 'off' || this.suspended) return
@@ -103,7 +104,7 @@ export class DuetState {
     const compatibility = compatibilityNotice(code, details, this.mode)
     if (compatibility) {
       this.notice(compatibility, { upgrade: code !== 'client_version_unsupported' })
-      void this.setMode('off')
+      void this.setMode('off', {reason:'error',code})
       return
     }
     const policyNotices = {
@@ -117,19 +118,20 @@ export class DuetState {
       harness_sync_failed: '无法继续同步 DSH 会话，语音已关闭。请检查 DSH 后重新开启。',
       interaction_mode_unavailable: '交互模式暂时不可用，请稍后再试',
       broadcast_mode_unavailable: '播报模式暂时不可用，请稍后再试',
+      voice_server_upgrade_required: '语音服务版本需要更新，请联系服务管理员。',
       client_protocol_unsupported: '插件与服务器协议不兼容，请更新插件或联系服务管理员',
       client_version_unsupported: '当前插件版本暂不受服务器支持，请联系服务管理员',
     }
     if (policyNotices[code]) {
       this.notice(policyNotices[code])
-      void this.setMode('off')
+      void this.setMode('off', {reason:'error',code})
       return
     }
     const busy = ['capacity_exhausted', 'server_busy', 'external_message_queue_full', 'busy'].includes(code)
     const upgrade = code === 'plugin_upgrade_required'
     const backendUpgrade = ['harness_result_backend_upgrade_required', 'harness_rpc_backend_upgrade_required'].includes(code)
     this.notice(code === 'voice_settings_changed' ? '连接配置已更新，请重新打开语音' : upgrade ? '请升级 duet 插件后再连接' : backendUpgrade ? '语音服务器需要更新协议，请稍后再试' : busy ? '服务器忙，请稍后再试' : code === 'voice_tab_in_use' ? '另一个 Harness 页面正在使用语音' : '语音连接不可用，请稍后重试')
-    void this.setMode('off')
+    void this.setMode('off', {reason:'error',code})
   }
 
   update({ hidden, running, state, results = [] }) {
@@ -172,9 +174,9 @@ export class DuetState {
     this.idleSince ??= this.now()
     if (!this.suspended && this.now() - this.idleSince >= IDLE_RELEASE_MS) {
       this.suspended = true
-      void this.replaceConnection()
+      void this.replaceConnection({reason:'idle_release'})
     }
   }
 
-  async dispose() { await this.setMode('off'); await this.retiring }
+  async dispose() { await this.setMode('off', {reason:'unmount'}); await this.retiring }
 }

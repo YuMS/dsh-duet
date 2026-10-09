@@ -1,5 +1,5 @@
 /** A brief, non-modal invitation after the microphone is actually ready. */
-import {normalizeGuidance} from '../shared/connection-guidance.mjs?v=0.1.8'
+import {normalizeGuidance} from '../shared/connection-guidance.mjs?v=0.1.9'
 export function mountConnectionHint(controls, { duration = 8000, onShown = ()=>{} } = {}) {
   const hint = document.createElement('div')
   hint.dataset.duetConnectionHint = ''

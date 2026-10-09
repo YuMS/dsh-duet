@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { broadcastText, resultNotification, LONG_RESULT_NOTICE } from '../../src/shared/result-notification.mjs'
+import { broadcastText, resultNotification, taskErrorText, LONG_RESULT_NOTICE } from '../../src/shared/result-notification.mjs'
 import { externalWithState } from '../../src/host/proxy.mjs'
+
+test('task errors keep readable messages without stringifying response objects', () => {
+  for (const error of ['服务拒绝请求', new Error('服务拒绝请求'),
+    { message: '服务拒绝请求', code: 'UNKNOWN' },
+    { error: { message: '服务拒绝请求' } }, { cause: new Error('服务拒绝请求') }]) {
+    assert.equal(taskErrorText(error), '服务拒绝请求')
+    assert.equal(resultNotification({id:'j',session_id:'s',status:'failed',error}, '工作').text, '服务拒绝请求')
+  }
+  const circular = {}; circular.cause = circular
+  for (const error of [circular, null, {}, '[object Object]',
+    { message: {}, headers: { Authorization: 'private' }, stack: 'private' }]) {
+    assert.equal(taskErrorText(error), '任务执行失败，请在 DSH 中查看详情。')
+  }
+})
 
 test('oversized results become bounded notices before WebSocket serialization, never partial code summaries', () => {
   for (const status of ['succeeded', 'failed']) {
