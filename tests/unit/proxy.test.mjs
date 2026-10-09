@@ -35,7 +35,9 @@ async function fixture(t, rejectStatus, overrides = {}) {
       ws.on('message', (raw, binary) => {
         const value = binary ? raw : JSON.parse(raw)
         messages.push(value)
-        if (value.type === 'session.update') ws.send(JSON.stringify({ type: 'session.created', connection_hint_reporting:overrides.hintReporting===true, session: { id:'voice-from-upstream', config: { harness_control_transport: 'client_rpc_v1', external_message_protocol: overrides.resultProtocol === false ? undefined : 'harness_result_v2' } } }))
+        if (value.type === 'session.update') ws.send(JSON.stringify({ type: 'session.created', ...(overrides.resultPush ? {harness_sync:{protocol:'harness_sync_v1',connection_id:'a'.repeat(32),cursor:64,epoch:'fixture'}} : {}), connection_hint_reporting:overrides.hintReporting===true, session: { id:'voice-from-upstream', config: { harness_control_transport: 'client_rpc_v1', external_message_protocol: overrides.resultProtocol === false ? undefined : 'harness_result_v2' } } }))
+        if(value.type==='harness.sync.subscribe') ws.send(JSON.stringify({type:'harness.sync.ready',connection_id:value.connection_id}))
+        if(value.type==='harness.sync.push') ws.send(JSON.stringify({type:'harness.sync.ack',connection_id:value.connection_id,event_id:value.event_id,accepted:true}))
         if (value.type === 'external_message') ws.send(JSON.stringify({ type: 'external_message.done', message_id: value.message_id }))
       })
     })
@@ -57,6 +59,20 @@ async function fixture(t, rejectStatus, overrides = {}) {
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+test('negotiated result events traverse proxy while old servers never receive unsolicited pushes', async t => {
+  const f=await fixture(t,null,{resultPush:true}),ws=await begin(f,'online')
+  const ready=next(ws)
+  ws.send(JSON.stringify({type:'harness.sync.subscribe',connection_id:'a'.repeat(32),protocol:'harness_sync_v1'}))
+  assert.equal((await ready).type,'harness.sync.ready')
+  const ack=next(ws)
+  ws.send(JSON.stringify({type:'harness.sync.push',connection_id:'a'.repeat(32),event_id:'fixture:65:j',result:{id:'j'}}))
+  assert.equal((await ack).accepted,true)
+  assert.equal(ws.readyState,WebSocket.OPEN)
+  ws.close();await once(ws,'close')
+  const old=await fixture(t),legacy=await begin(old,'online')
+  assert.equal(old.messages.some(e=>e.type?.startsWith('harness.sync.')),false)
+  legacy.close();await once(legacy,'close')
+})
 test('a long result does not close broadcast or block the next notification', {timeout:5000}, async t => {
   const f = await fixture(t), ws = await begin(f, 'tts_only')
   for (const [id, text] of [['long', '字'.repeat(8001)], ['next', '下一项已完成']]) {

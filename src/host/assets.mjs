@@ -6,6 +6,8 @@ const modules = {
   audio: 'client/audio', microphone: 'client/microphone', shortcuts: 'client/shortcuts',
   browser: 'client/browser', rpc: 'client/rpc', composer: 'client/composer',
   composer_bridge: 'client/composer-bridge',
+  harness_sync: 'client/harness-sync',
+  local_sync: 'client/local-sync',
   interactions: 'client/interactions', tutorial: 'client/tutorial',
   tutorial_adapter: 'client/tutorial-adapter', tutorial_request: 'client/tutorial-request',
   feedback: 'client/feedback', consent: 'client/consent',

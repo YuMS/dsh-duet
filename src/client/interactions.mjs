@@ -1,20 +1,22 @@
 /** Use the same pending objects as DSH's clickable question/approval cards. */
 export function nativeInteractions(ctx) {
-  const firstSeen = new WeakMap()
+  const firstSeen = new Map()
   const pending = () => ctx.uiSession.sessionStatus
     ? [...ctx.uiSession.sessionStatus.getSnapshot().values()].map(row => row.pendingInteraction).filter(Boolean)
     : [...ctx.uiSession.pendingInteractions.getSnapshot().values()]
   const publicValue = value => {
-    if (!firstSeen.has(value)) firstSeen.set(value, Date.now() / 1000)
-    return { id: value.key, session_id: value.sessionId, created_at: firstSeen.get(value),
+    if (!firstSeen.has(value.key)) firstSeen.set(value.key, Date.now() / 1000)
+    if (firstSeen.size > 512) firstSeen.delete(firstSeen.keys().next().value)
+    return { id: value.key, session_id: value.sessionId, created_at: firstSeen.get(value.key),
       kind: value.kind === 'plan-review' ? 'plan_review' : value.kind,
       ...(value.kind === 'approval' ? { approval_id: value.key, tool_name: value.toolName,
         call_id: value.callId || '', reason: value.reason || '' } : { questions: value.questions }) }
   }
-  return async (request, signal) => {
+  const snapshot = () => pending().filter(v => ['question', 'plan-review', 'approval'].includes(v.kind)).map(publicValue)
+  const execute = async (request, signal) => {
     signal?.throwIfAborted()
     if (request.method === 'GET' && request.path === '/api/interactions') {
-      return { interactions: pending().filter(v => ['question', 'plan-review', 'approval'].includes(v.kind)).map(publicValue) }
+      return { interactions: snapshot() }
     }
     const match = request.path.match(/^\/api\/interactions\/([^/]+)\/respond$/)
     if (request.method !== 'POST' || !match) return undefined
@@ -31,4 +33,9 @@ export function nativeInteractions(ctx) {
     }
     return { ok: true, interaction_id: value.key }
   }
+  execute.snapshot = snapshot
+  const store = ctx.uiSession.sessionStatus ?? ctx.uiSession.pendingInteractions
+  execute.supportsSync = typeof store.subscribe === 'function'
+  execute.subscribe = fn => store.subscribe?.(fn) ?? (() => {})
+  return execute
 }

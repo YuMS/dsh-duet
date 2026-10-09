@@ -1,6 +1,6 @@
 {
   "name": "dsh-duet",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "duet（二重奏）：只用语音就能操作 DSH，边听边说、随时插话的全双工语音助手。",
   "keywords": [
     "dsh-plugin",

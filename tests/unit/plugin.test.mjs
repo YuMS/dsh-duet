@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
+import { EventEmitter } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -57,6 +58,7 @@ function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRe
   const request = (method, url, body, headers = {}) => new Promise((resolve, reject) => {
     const encoded = body === undefined ? null : Buffer.from(JSON.stringify(body))
     const req = {
+      ...Object.fromEntries(['once','off'].map(k=>[k, (...args)=>req.events[k](...args)])), events:new EventEmitter(),
       method,
       url,
       headers: { 'x-duplex-control-client': 'node-test', ...headers },
@@ -66,6 +68,7 @@ function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRe
     }
     let status = 0, responseHeaders = {}
     const res = {
+      ...Object.fromEntries(['once','off'].map(k=>[k, (...args)=>res.events[k](...args)])), events:new EventEmitter(),
       setHeader(name,value) {responseHeaders[name.toLowerCase()]=value},
       writeHead(value, headers = {}) {
         status = value
@@ -171,6 +174,25 @@ test('DSH empty-session fork refusal is a business conflict, not an internal err
   assert.equal(result.status, 409)
   assert.equal(result.body.error_code, 'session/fork-unavailable')
   assert.match(result.body.detail, /完整轮次/)
+})
+
+test('completion feed waits without polling and wakes on a real turn-end hook', async () => {
+  const locked=makeHarness({authRejection:401})
+  assert.equal((await locked.request('GET','/duplex-control/api/results/wait?after=0')).status,401)
+  const {request,emitSession}=makeHarness()
+  const head=(await request('GET','/duplex-control/api/health')).body
+  let finished=false
+  const waiting=request('GET',`/duplex-control/api/results/wait?after=${head.result_cursor}&epoch=${head.focus_epoch}&limit=20`).then(value=>{finished=true;return value})
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(finished,false)
+  emitSession('turn/start',{turn:9})
+  emitSession('user/message',{source:{kind:'user',rpcId:'fixture'},content:[{type:'text',text:'测试'}]})
+  emitSession('assistant/message',{turn:9,step:1,stream:[],message:{content:[{type:'text',text:'好了'}]}})
+  emitSession('turn/end',{turn:9,reason:{kind:'completed'}})
+  const response=await waiting
+  assert.equal(response.status,200);assert.equal(response.body.results[0].result,'好了')
+  assert.equal(response.body.epoch,head.focus_epoch)
+  const stale=await request('GET','/duplex-control/api/results/wait?after=100&epoch=old-process')
+  assert.equal(stale.body.current_cursor,1)
 })
 
 for (const origin of ['harness_ui', 'duplex_control']) {

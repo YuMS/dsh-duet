@@ -12,6 +12,7 @@ import { FeedbackService } from './feedback-store.mjs'
 import { RemoteFeedback } from './feedback-files.mjs'
 import { PLUGIN_VERSION } from '../shared/state.mjs'
 import { buildSessionCatalog, sessionLabel } from '../shared/catalog.mjs'
+import { broadcastText } from '../shared/result-notification.mjs'
 import { publicAsset } from './assets.mjs'
 import { duetEnv } from './environment.mjs'
 import { EndpointDiscovery } from './endpoint-discovery.mjs'
@@ -152,7 +153,12 @@ async function readJson(req) {
   return value
 }
 
+import { ResultFeed } from './result-feed.mjs'
+import { registerSyncFeed } from './sync-feed.mjs'
+
 export function apply(ctx, options = {}) {
+  const resultFeed = new ResultFeed()
+  ctx.effect(() => () => resultFeed.notify())
   const jobs = new Map()
   const jobOrder = []
   const composerRequests = new Map()
@@ -169,6 +175,7 @@ export function apply(ctx, options = {}) {
   // compatible: their in-memory lastRevision must never shadow a restarted host.
   let focusRevision = Date.now()
   let completionSequence = 0
+  let syncFeed
   let composerRequestSequence = 0
   let lastDuetRuntimeSeenAt = 0
   let lastNativeInteractionsSeenAt = -Infinity
@@ -300,6 +307,7 @@ export function apply(ctx, options = {}) {
     composerRequests.set(id, request)
     composerRequestOrder.push(id)
     for (const wake of [...composerPollWaiters]) wake()
+    syncFeed?.commands()
     while (composerRequestOrder.length > MAX_COMPOSER_REQUESTS) {
       const staleId = composerRequestOrder.shift()
       const stale = composerRequests.get(staleId)
@@ -363,6 +371,8 @@ export function apply(ctx, options = {}) {
       job.completed_at = nowSeconds()
       completionSequence += 1
       job.completion_seq = completionSequence
+      resultFeed.notify()
+      syncFeed?.changed()
       throw error
     }
     if (syncFocus) selectSession(sessionId)
@@ -419,9 +429,12 @@ export function apply(ctx, options = {}) {
     }
     completionSequence += 1
     job.completion_seq = completionSequence
+    resultFeed.notify()
+    syncFeed?.changed()
   }
 
   ctx.on('session/event', (session, event) => {
+    if (['turn/start', 'turn/end', 'user/message'].includes(event.type)) syncFeed?.changed()
     if (['turn/start', 'turn/end', 'user/message'].includes(event.type)) {
       audit.event('dsh.session_event', { session_id: session.id, event })
     }
@@ -493,6 +506,25 @@ export function apply(ctx, options = {}) {
     if(req.headers.origin!==undefined || req.headers[IDENTITY_TRANSPORT_HEADER.toLowerCase()]!==IDENTITY_TRANSPORT)return false
     try {feedback.user(req);return settingsWriteAllowed(req,{verifiedLocalIdentity:true})} catch {return false}
   }
+  ctx.effect(() => {
+    syncFeed = registerSyncFeed(ctx, {
+      snapshot: async (cursor, epoch) => {
+        const head = completionSequence
+        const after = epoch === focusEpoch && Number.isSafeInteger(cursor) ? Math.min(cursor, head) : head
+        const completed = jobOrder.map(id => jobs.get(id)).filter(job => job?.completion_seq > after)
+          .sort((a, b) => a.completion_seq - b.completion_seq)
+        const selected = completed.slice(0, 20)
+        return { epoch: focusEpoch, cursor: selected.at(-1)?.completion_seq ?? Math.max(after, head),
+          has_more: completed.length > selected.length, sessions: await listSessions(),
+          results: selected.map(job => ({...publicJob(job), result:broadcastText(job.result || ''), error:broadcastText(job.error || '')})),
+          health: { result_cursor: head, focus_epoch: focusEpoch } }
+      },
+      touch: owner => { lastNativeInteractionsSeenAt = nowSeconds(); browserClients.set(owner.client_id, { ...owner, last_seen_at: nowSeconds() }) },
+      commands: id => [...composerRequests.values()].filter(r => !r.claimed_by && r.target_client_id === id).slice(0, 20).map(publicComposerRequest),
+    })
+    return () => syncFeed.close()
+  })
+
   const handleApi = async (req, res, pathname) => {
     if(req.method==='POST' && pathname===`${ROUTE}/api/feedback`){
       const rejection = ctx.connection.requestRejection(req)
@@ -1069,9 +1101,19 @@ export function apply(ctx, options = {}) {
       sendJson(res, 200, { jobs: values })
       return
     }
-    if (req.method === 'GET' && pathname === `${ROUTE}/api/results`) {
+    if (req.method === 'GET' && [ `${ROUTE}/api/results`, `${ROUTE}/api/results/wait` ].includes(pathname)) {
+      if (pathname.endsWith('/wait')) {
+        const rejection = ctx.connection.requestRejection(req)
+        if (rejection) { sendError(res, rejection, '请先打开并登录 DSH 主页面'); return }
+      }
       const url = new URL(req.url || '/', 'http://localhost')
       const after = Math.max(0, Number.parseInt(url.searchParams.get('after') || '0', 10) || 0)
+      const epoch = url.searchParams.get('epoch')
+      if (pathname.endsWith('/wait') && after >= completionSequence && (!epoch || epoch === focusEpoch)) {
+        if (resultFeed.waiters.size >= 64) { sendError(res, 429, 'result_feed_capacity'); return }
+        await resultFeed.wait(req, res)
+        if (res.destroyed || hostAbort.signal.aborted) return
+      }
       const limit = Math.max(1, Math.min(200, Number.parseInt(url.searchParams.get('limit') || '100', 10) || 100))
       const completed = jobOrder
         .map(id => jobs.get(id))
@@ -1083,6 +1125,7 @@ export function apply(ctx, options = {}) {
         results: selected.map(publicJob),
         next_cursor: nextCursor,
         current_cursor: completionSequence,
+        epoch: focusEpoch,
         has_more: completed.length > selected.length,
       })
       return

@@ -1,6 +1,6 @@
 /** Reverse RPC executes on this authenticated DSH origin, never a supplied URL. */
 import { orderSessionCatalog, readWorkspaceView } from '../shared/catalog.mjs'
-const MAX_BYTES = 256_000
+const MAX_BYTES = 2_000_000
 const READ = /^\/api\/(?:health|sessions|jobs|results|interactions|composer\/focused|sessions\/[A-Za-z0-9_-]+\/composer)$/
 const WRITE = /^\/api\/(?:sessions|sessions\/[A-Za-z0-9_-]+\/(?:composer\/submit|activate|rename|fork)|interactions\/(?:(?:question|approval)(?::|%3[Aa]))?[A-Za-z0-9_-]+\/respond)$/
 
@@ -32,6 +32,7 @@ export class HarnessRPCExecutor {
     // Native Window.fetch rejects an RPCExecutor receiver (Illegal invocation).
     // Call the captured function plainly, not as an instance method.
     this.send = send; this.fetch = (...args) => fetchImpl(...args); this.closed = false
+    this.maxBytes = 256_000
     this.diagnostic = diagnostic
     this.localComposer = localComposer
     this.catalogOrder = catalogOrder
@@ -84,7 +85,8 @@ export class HarnessRPCExecutor {
           return { ...envelope, status: 409, body: { error_code: error.code || 'composer_operation_failed', detail: 'Draft changed or unavailable; read input_status again' } }
         }
       }
-      const query = request.params ? '?' + new URLSearchParams(request.params) : ''
+      const params = request.path === '/api/results' ? {...request.params, limit:Math.min(20, request.params?.limit || 20)} : request.params
+      const query = params ? '?' + new URLSearchParams(params) : ''
       const response = await this.fetch('/duplex-control' + request.path + query, {
         method: request.method, credentials: 'same-origin', redirect: 'error',
         cache: 'no-store', signal: controller.signal,
@@ -94,13 +96,16 @@ export class HarnessRPCExecutor {
         ...(request.method !== 'GET' ? { body: JSON.stringify(payload) } : {}),
       })
       const text = await response.text()
-      if (new TextEncoder().encode(text).length > MAX_BYTES - 512) throw new Error('harness_rpc_response_too_large')
+      // Older peers count Python's ASCII-escaped JSON, not its UTF-8 wire form.
+      const measured = this.maxBytes > 256_000 ? text : text.replace(/[^\x00-\x7f]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4,'0'))
+      if (new TextEncoder().encode(measured).length > this.maxBytes - 4096) throw new Error('harness_rpc_response_too_large')
       const body = JSON.parse(text)
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_harness_rpc_body')
       controller.signal.throwIfAborted()
       if (response.ok && this.binding.completed) await this.binding.completed(request, body, controller.signal)
       if (response.status === 200 && request.method === 'GET' && request.path === '/api/sessions' && Array.isArray(body.sessions)) {
-        body.duet_rpc_capabilities = ['create_session_v1']
+        body.duet_rpc_capabilities = ['create_session_v1',
+          ...(this.binding.syncSupported?.() === false ? [] : ['harness_sync_v1'])]
         // Both startup prompt and nth_N resolution read this same browser-local
         // order, including manual drag order; archived rows cannot consume ranks.
         body.sessions = this.catalogOrder(body.sessions)

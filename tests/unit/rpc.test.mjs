@@ -34,7 +34,7 @@ test('catalog advertises browser RPC creation support without changing sessions'
   const rpc = new HarnessRPCExecutor(r => replies.push(r), async () =>
     new Response(JSON.stringify({sessions: [{session_id:'a',label:'A'}]})), undefined, null, rows => rows)
   await rpc.execute(message())
-  assert.deepEqual(replies[0].body.duet_rpc_capabilities, ['create_session_v1'])
+  assert.deepEqual(replies[0].body.duet_rpc_capabilities, ['create_session_v1', 'harness_sync_v1'])
   assert.equal(replies[0].body.sessions[0].label, 'A')
   rpc.close()
 })

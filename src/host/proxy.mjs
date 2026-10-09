@@ -57,7 +57,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
     if (!['ws:', 'wss:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error('invalid_voice_endpoint')
   }
   const { WebSocket, WebSocketServer } = require('ws')
-  const server = new WebSocketServer({ noServer: true, maxPayload: 1_000_000,
+  const server = new WebSocketServer({ noServer: true, maxPayload: 2_100_000,
     handleProtocols: protocols => protocols.has(VOICE_PROTOCOL) ? VOICE_PROTOCOL : false })
   const connections = new Map()
   const stop = ctx.webServer.registerUpgrade({
@@ -117,6 +117,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
         const pending = []
         const startup = setTimeout(() => fail('voice_start_timeout'), 20000)
         let hintReporting=false,hintReported=false
+        let resultPushConnection = null
         const sendUpstream = (data, binary) => {
           if (!binary) {
             const message = JSON.parse(data.toString())
@@ -171,6 +172,11 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
               return
             }
             if (!initialized) throw new Error('session_not_started')
+            if (message.type?.startsWith('harness.sync.')) {
+              if (!clientRPC || !resultPushConnection || message.connection_id !== resultPushConnection ||
+                  !['subscribe','state','heartbeat','push','fallback'].some(kind => message.type === `harness.sync.${kind}`) || raw.length > (['harness.sync.subscribe','harness.sync.state'].includes(message.type) ? 2_000_000 : 100_000)) throw Error('invalid_harness_sync')
+              forward(raw.toString()); return
+            }
             if (message.type === 'harness.composer.update') {
               if (!clientRPC || raw.length > 100_000) throw new Error('invalid_composer_push')
               forward(raw.toString())
@@ -210,6 +216,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
                 rpcRequests.set(event.request_id, event.connection_id)
               }
               if (event.type === 'session.created') {
+                if (clientRPC && event.harness_sync?.protocol === 'harness_sync_v1') resultPushConnection = event.harness_sync.connection_id
                 hintReporting=event.connection_hint_reporting===true
                 if (clientRPC && event.session?.config?.harness_control_transport !== 'client_rpc_v1') { fail('harness_rpc_backend_upgrade_required'); return }
                 if (mode === 'tts_only' && event.session?.config?.external_message_protocol !== 'harness_result_v2') { fail('harness_result_backend_upgrade_required'); return }

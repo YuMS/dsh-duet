@@ -50,6 +50,34 @@ try {
   await entry.hover();const edge=await actions.boundingBox();assert.ok(edge.x>=8 && edge.x+edge.width<=692)
   await page.evaluate(()=>stop());assert.equal(await actions.count(),0)
   assert.equal(await entry.innerText(),'duet.')
+  // DSH 0.2: the immediate flex child stays wide; only its ancestors shrink.
+  await page.evaluate(async()=>{
+    const sidebar=document.querySelector('#sidebar'), controls=document.querySelector('#controls')
+    sidebar.style.cssText='position:absolute;left:0;bottom:12px;width:280px;padding:0 12px;box-sizing:border-box;overflow:hidden'
+    const contents=document.createElement('div');contents.style.display='contents'
+    const footer=document.createElement('div');footer.id='footer';footer.style.cssText='display:flex;flex-direction:column;width:100%'
+    const slot=document.createElement('div');slot.id='slot';slot.style.cssText='display:flex;width:256px;flex:none'
+    sidebar.prepend(contents);contents.append(footer);footer.append(slot);slot.append(controls)
+    const settings=document.querySelector('#hostSettings');settings.style.margin='0';slot.append(settings)
+    window.stop=(await import('/layout.mjs')).mountControlsLayout(controls)
+  })
+  await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='false')
+  for(let i=0;i<2;i++){
+    await page.evaluate(()=>{const s=document.querySelector('#sidebar');s.style.width='56px';s.style.padding='0 10px'})
+    await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='true')
+    assert.equal(await entry.textContent(),'D.')
+    assert.ok(await page.locator('#slot').evaluate(e=>e.getBoundingClientRect().width)<=36)
+    const launcher=await entry.boundingBox(),settings=await page.locator('#hostSettings').boundingBox()
+    assert.ok(settings.y>=launcher.y+launcher.height)
+    await entry.hover();await actions.waitFor({state:'visible'})
+    const flyout=await actions.boundingBox();assert.ok(flyout.x>=56 && flyout.x+flyout.width<=700)
+    await page.mouse.click(400,100)
+    await page.evaluate(()=>{const s=document.querySelector('#sidebar');s.style.width='280px';s.style.padding='0 12px'})
+    await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='false')
+    assert.equal(await entry.innerText(),'duet.');assert.equal(await actions.isVisible(),true)
+  }
+  await page.evaluate(()=>stop())
+  assert.equal(await page.locator('#slot').getAttribute('data-duet-compact-host'),null)
   assert.deepEqual(errors,[])
   console.log('Compact controls: host settings preserved, unclipped flyout, keyboard, teaching, resize and cleanup passed')
 } finally { await browser.close() }

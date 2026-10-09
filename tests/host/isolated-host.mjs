@@ -32,13 +32,25 @@ const wss = new WebSocketServer({ server: upstream })
 const sessions = []
 let rejectBusy = false
 let rejectUpgrade = false
+const syncCapabilities=['session_state','pending_interactions','task_results']
 wss.on('connection', ws => {
   const session = { ws, mode: null, binary: 0, events: [] }; sessions.push(session)
   ws.on('message', (raw, binary) => {
     if (binary) { session.binary++; return }
     const msg = JSON.parse(raw); session.events.push(msg)
+    if (msg.type === 'harness.rpc.response' && msg.request_id === 'f'.repeat(32)) {
+      ws.send(JSON.stringify({type:'session.created',harness_sync:{protocol:'harness_sync_v1',capabilities:syncCapabilities,
+        connection_id:'a'.repeat(32),cursor:msg.body.result_cursor,epoch:msg.body.focus_epoch},
+        session:{id:`fixture-${sessions.length}`,config:{harness_control_transport:'client_rpc_v1',external_message_protocol:'harness_result_v2'}}}));return
+    }
+    if(msg.type==='harness.sync.subscribe')ws.send(JSON.stringify({type:'harness.sync.ready',connection_id:msg.connection_id,capabilities:syncCapabilities}))
+    if(msg.type==='harness.sync.state')ws.send(JSON.stringify({type:'harness.sync.state_ack',connection_id:msg.connection_id,sequence:msg.sequence,accepted:true}))
+    if(msg.type==='harness.sync.push')ws.send(JSON.stringify({type:'harness.sync.ack',connection_id:msg.connection_id,event_id:msg.event_id,accepted:true}))
     if (msg.type === 'session.update') {
       session.mode = msg.session.io_mode
+      if(session.mode==='online'&&!rejectBusy&&!rejectUpgrade){
+        ws.send(JSON.stringify({type:'harness.rpc.request',connection_id:'a'.repeat(32),request_id:'f'.repeat(32),method:'GET',path:'/api/health'}));return
+      }
       ws.send(JSON.stringify(rejectUpgrade
         ? { type: 'error', error: { code: 'plugin_upgrade_required', compatibility: {
           modes: { online: { available: false, min_client_version: '0.9.99' }, tts_only: { available: true } }
@@ -88,9 +100,11 @@ try {
     navigator.mediaDevices.getUserMedia = (...args) => { globalThis.__micRequests++; return original(...args) }
   })
   page = await context.newPage(); const errors = []
+  const businessReads=[]
+  page.on('request',r=>{if(r.method()==='GET'&&/\/api\/(sessions|health|results)(\?|$)/.test(new URL(r.url()).pathname))businessReads.push(r.url())})
   page.setDefaultTimeout(15000)
   const dismissHostOnboarding = async () => {
-    const welcome = page.getByRole('dialog', { name: 'Internal Testing Notice', exact: true })
+    const welcome = page.getByRole('dialog', { name: /^(Internal Testing Notice|Preview Notice)$/ })
     if (await welcome.isVisible()) await welcome.getByRole('button', { name: 'Continue', exact: true }).click()
     const later = page.getByRole('button', { name: 'Configure later', exact: true })
     await later.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {})
@@ -111,6 +125,7 @@ try {
     const body = (await response.text())
       .replace('export function mountDuet(ctx) {', 'export function mountDuet(ctx) { globalThis.__duetAccess = composerAccess(ctx); globalThis.__duetCtx = ctx;')
       .replace('const state = new DuetState(', 'const state = globalThis.__duetState = new DuetState(')
+      .replace('localSync = new LocalSync(', 'localSync = globalThis.__duetLocalSync = new LocalSync(')
       .replace('return () => {\n    disposed = true', 'return globalThis.__duetDispose = () => {\n    disposed = true')
     await route.fulfill({ response, body })
   })
@@ -124,6 +139,10 @@ try {
   assert.equal((await api('/api/health')).body.plugin_version, PLUGIN_VERSION)
   assert.equal(await page.locator('#dsh-duet-controls').count(), 1)
   await delay(1500); assert.equal(sessions.length, 0)
+  await page.waitForFunction(()=>globalThis.__duetLocalSync?.active)
+  const idleReads=businessReads.length;await delay(5500)
+  assert.equal(businessReads.length,idleReads,'idle local sync must not poll business APIs')
+  mark('local_event_stream_zero_idle_business_queries')
   mark('installed_tarball_real_DSH_web_boot', 'single_toolbar', 'default_off_no_backend_connection')
   await dismissHostOnboarding()
   const dismiss = page.getByRole('button', { name: '不再提醒', exact: true })
@@ -250,7 +269,12 @@ try {
   await page.waitForFunction(() => globalThis.__duetState.ready && globalThis.__duetState.mode === 'online')
   await until(() => old.ws.readyState === 3 && sessions.at(-1).binary > 0, 'mode reconnect and fake microphone')
   await until(() => sessions.at(-1).events.some(e => e.type === 'harness.composer.update'), 'composer push via actual host proxy')
-  const online = sessions.at(-1), requestId = 'a'.repeat(32), connectionId = 'b'.repeat(32)
+  const online = sessions.at(-1), requestId = 'a'.repeat(32), connectionId = 'a'.repeat(32)
+  await page.waitForFunction(()=>globalThis.__duetState.connection.resultPush.active)
+  assert.ok(online.events.some(e=>e.type==='harness.sync.subscribe'))
+  const onlineReads=businessReads.length;await delay(2200)
+  assert.equal(businessReads.length,onlineReads,'negotiated online mode must not poll business APIs')
+  mark('harness_sync_v1_negotiated', 'online_zero_idle_business_queries')
   online.ws.send(JSON.stringify({ type: 'harness.rpc.request', request_id: requestId, connection_id: connectionId,
     method: 'PUT', path: `/api/sessions/${sid}/composer`, payload: { text: '真实代理 RPC 写入', overwrite: true, require_focus: true } }))
   await until(() => online.events.some(e => e.type === 'harness.rpc.response' && e.request_id === requestId), 'RPC response')
@@ -267,11 +291,14 @@ try {
     value.result.then(answer => { globalThis.__nativeAnswer = answer; remove() })
     return value.key
   }, { sid })
-  await question()
+  const firstQuestion = await question()
+  await until(()=>online.events.some(e=>e.type==='harness.sync.state'&&e.state.interactions.some(i=>i.id===firstQuestion)), 'pending question pushed')
   await page.getByText('请选择测试颜色', { exact: true }).waitFor()
   await page.getByText('测试蓝色', { exact: true }).click()
   await page.getByRole('button', { name: /^(Confirm|确认|Submit|提交)$/ }).click()
   await page.waitForFunction(() => globalThis.__nativeAnswer !== null)
+  await until(()=>{const latest=online.events.filter(e=>e.type==='harness.sync.state').at(-1);return latest&&!latest.state.interactions.some(i=>i.id===firstQuestion)}, 'answered question removed from snapshot')
+  mark('native_question_push_and_resolution')
   assert.deepEqual((await page.evaluate(() => globalThis.__nativeAnswer)).answers[0].selected, ['测试蓝色'])
   const key = await question()
   await page.getByText('请选择测试颜色', { exact: true }).waitFor()

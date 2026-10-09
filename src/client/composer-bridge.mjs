@@ -1,7 +1,7 @@
 /** Composer requests belong to one explicit voice/tutorial connection, never all tabs. */
-import { focusedSession as currentSession } from './composer.mjs?v=0.1.7'
+import { focusedSession as currentSession } from './composer.mjs?v=0.1.8'
 
-export function startComposerBridge(ctx, clientId, fetchImpl = fetch) {
+export function startComposerBridge(ctx, clientId, fetchImpl = fetch, feed = null) {
   const focusedSession = () => currentSession(ctx)
   const bridgeFetch = async (url, options = {}, timeoutMs = 8000) => {
     const request = new AbortController()
@@ -15,6 +15,7 @@ export function startComposerBridge(ctx, clientId, fetchImpl = fetch) {
   const controller = new AbortController()
   let pollRunning = false
   let retryTimer
+  const inFlight = new Set()
 
   const digest = async (text) => {
     const bytes = new TextEncoder().encode(text)
@@ -127,6 +128,9 @@ export function startComposerBridge(ctx, clientId, fetchImpl = fetch) {
 
   const processRequest = async (candidate) => {
     if (controller.signal.aborted || candidate.target_client_id !== clientId) return
+    if (inFlight.has(candidate.id)) return
+    inFlight.add(candidate.id)
+    try {
     const claimResponse = await bridgeFetch(
       `/duplex-control/api/composer/requests/${encodeURIComponent(candidate.id)}/claim`,
       {
@@ -152,10 +156,12 @@ export function startComposerBridge(ctx, clientId, fetchImpl = fetch) {
         status: error?.code === "session_not_ready" ? 503 : 409,
       })
     }
+    } finally { inFlight.delete(candidate.id) }
   }
 
   const poll = async () => {
     if (pollRunning || controller.signal.aborted) return
+    if (feed?.active) return
     clearTimeout(retryTimer)
     pollRunning = true
     let succeeded = false
@@ -179,12 +185,16 @@ export function startComposerBridge(ctx, clientId, fetchImpl = fetch) {
       pollRunning = false
       if (!controller.signal.aborted) {
         // Successful long polls re-arm without a background-tab timer.
-        if (succeeded) void poll()
+        if (succeeded && !feed?.active) void poll()
         else retryTimer = setTimeout(() => { void poll() }, 1000)
       }
     }
   }
 
+  const unbind = feed?.bindOwner(() => ({ client_id: clientId, session_id: focusedSession() || null, visibility: document.visibilityState }))
+  const uncommand = feed?.onCommand(request => { void processRequest(request).catch(() => {}) })
+  const unfeed = feed?.subscribe(() => { clearTimeout(retryTimer); if (!feed.active) void poll() })
+  const focus = ctx.sessions.list.subscribe?.(() => feed?.beat())
   void poll()
   const resume = () => { void poll() }
   window.addEventListener?.('online', resume)
@@ -193,6 +203,7 @@ export function startComposerBridge(ctx, clientId, fetchImpl = fetch) {
   return () => {
     controller.abort()
     clearTimeout(retryTimer)
+    unbind?.(); uncommand?.(); unfeed?.(); focus?.()
     window.removeEventListener?.('online', resume)
     window.removeEventListener?.('pageshow', resume)
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', resume)

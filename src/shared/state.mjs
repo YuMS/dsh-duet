@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.1.7'
+export const PLUGIN_VERSION = '0.1.8'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
@@ -48,7 +48,7 @@ export class DuetState {
     this.suspended = false
     this.idleSince = null
     if (mode === 'off') this.pending.clear()
-    // Online result polling belongs to its existing server-side Harness client.
+    // Online notifications belong to the negotiated Harness stream (or legacy adapter).
     if (mode === 'online') this.pending.clear()
     await this.replaceConnection()
   }

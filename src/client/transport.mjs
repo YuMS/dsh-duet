@@ -1,7 +1,7 @@
 /** Use the same physical WebSocket base as DSH's own API gateway. */
-export function voiceSocketUrl(params, globals = globalThis) {
+export function voiceSocketUrl(params, globals = globalThis, path = 'duplex-control/voice/ws') {
   const base = globals.__DSH_TRANSPORT__?.streamBaseUrl ?? globals.document.baseURI
-  const url = new URL('duplex-control/voice/ws', base)
+  const url = new URL(path, base)
   if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) {
     throw Error('voice_transport_unavailable')
   }

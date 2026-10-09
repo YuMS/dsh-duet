@@ -1,6 +1,25 @@
 /** A compact launcher; its top-layer flyout consumes no host footer space. */
 export function mountControlsLayout(controls) {
   const parent = controls.parentElement
+  const hostCompact = parent.getAttribute('data-duet-compact-host')
+  const ancestors = []
+  for (let node = parent; node; node = node.parentElement) ancestors.push(node)
+  // Flex children may retain their intrinsic width after the sidebar shrinks.
+  // Measure the available ancestor content boxes, skipping display:contents.
+  const geometry = () => {
+    let width = Infinity, boundary = parent.getBoundingClientRect(), clipped = false
+    for (const node of ancestors) {
+      const rect = node.getBoundingClientRect(), style = getComputedStyle(node)
+      if (style.display === 'contents' || rect.width <= 0) continue
+      const inset = ['paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth']
+        .reduce((sum, key) => sum + (parseFloat(style[key]) || 0), 0)
+      width = Math.min(width, Math.max(0, rect.width - inset))
+      if (!clipped && ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)) {
+        boundary = rect; clipped = true
+      }
+    }
+    return { width, boundary }
+  }
   const entry = controls.querySelector('#dsh-duet-entry')
   if (!entry) return () => {}
   const initial = { controls: controls.style.cssText, entry: entry.style.cssText }
@@ -22,7 +41,7 @@ export function mountControlsLayout(controls) {
   const position = () => {
     if (!opened) return
     const rect = entry.getBoundingClientRect(), width = actions.offsetWidth, height = actions.offsetHeight
-    const sidebar = parent.getBoundingClientRect(), right = Math.max(rect.right, sidebar.right) + 8
+    const sidebar = geometry().boundary, right = Math.max(rect.right, sidebar.right) + 8
     actions.style.left = `${Math.max(8, Math.min(right + width <= innerWidth - 8 ? right : Math.min(rect.left, sidebar.left) - width - 8, innerWidth - width - 8))}px`
     actions.style.top = `${Math.max(8, Math.min(rect.top + (rect.height - height) / 2, innerHeight - height - 8))}px`
   }
@@ -50,10 +69,13 @@ export function mountControlsLayout(controls) {
     }, 220)
   }
   const update = () => {
-    const next = parent.getBoundingClientRect().width < 160 && typeof actions.showPopover === 'function'
+    const next = geometry().width < 160 && typeof actions.showPopover === 'function'
     if (controls.dataset.compact === String(next)) { position(); return }
     close(); compact = next
     controls.dataset.compact = String(compact)
+    if (compact) parent.setAttribute('data-duet-compact-host', 'true')
+    else if (hostCompact === null) parent.removeAttribute('data-duet-compact-host')
+    else parent.setAttribute('data-duet-compact-host', hostCompact)
     controls.style.flexDirection = 'row'
     controls.style.margin = compact ? '4px 0' : '4px 8px'
     controls.style.padding = compact ? '2px 0' : '6px 8px'
@@ -76,7 +98,7 @@ export function mountControlsLayout(controls) {
     }
   }
   const style = document.createElement('style')
-  style.textContent = '#dsh-duet-actions:popover-open{display:flex} #dsh-duet-entry[role=button]:focus-visible{outline:2px solid #80c2ff;outline-offset:2px;border-radius:6px}'
+  style.textContent = '[data-duet-compact-host="true"]{flex-direction:column!important;align-items:center!important;max-width:100%} #dsh-duet-actions:popover-open{display:flex} #dsh-duet-entry[role=button]:focus-visible{outline:2px solid #80c2ff;outline-offset:2px;border-radius:6px}'
   controls.append(style)
   listen(entry, 'pointerenter', open); listen(entry, 'pointerleave', later)
   listen(actions, 'pointerenter', () => clearTimeout(timer)); listen(actions, 'pointerleave', later)
@@ -101,7 +123,7 @@ export function mountControlsLayout(controls) {
   })
   listen(window, 'resize', position); listen(window, 'scroll', position, true)
   const observer = new ResizeObserver(update)
-  observer.observe(parent)
+  for (const node of ancestors) observer.observe(node)
   update()
   return () => {
     close(); disposed = true; observer.disconnect()
@@ -111,5 +133,7 @@ export function mountControlsLayout(controls) {
     controls.style.cssText = initial.controls; entry.style.cssText = initial.entry
     controls.append(...actions.children); actions.remove(); style.remove()
     delete controls.dataset.compact
+    if (hostCompact === null) parent.removeAttribute('data-duet-compact-host')
+    else parent.setAttribute('data-duet-compact-host', hostCompact)
   }
 }
