@@ -58,16 +58,16 @@ export function composerAccess(ctx, label = () => '') {
       if (!value) fail('session_not_ready')
       return { composer: value }
     }
-    const match = request.path.match(/^\/api\/sessions\/([A-Za-z0-9_-]+)\/composer$/)
+    const match = request.path.match(/^\/api\/sessions\/((?:[A-Za-z0-9_:-]|%3[Aa]){1,256})\/composer$/)
     if (request.method === 'GET' && match) {
-      const id = match[1]
+      const id = decodeURIComponent(match[1])
       const value = await snapshot(id, inputFor(id))
       signal?.throwIfAborted()
       if (request.params?.require_focus === 'true' && focused() !== id) fail('focus_conflict')
       return { composer: value }
     }
     if (request.method !== 'PUT' || !match) return undefined
-    const id = match[1], payload = request.payload || {}, input = inputFor(id)
+    const id = decodeURIComponent(match[1]), payload = request.payload || {}, input = inputFor(id)
     const overwrite = payload.overwrite === true
     const before = overwrite ? null : await snapshot(id, input)
     signal?.throwIfAborted()

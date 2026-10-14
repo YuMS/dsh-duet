@@ -30,7 +30,7 @@ try {
   await page.evaluate(()=>{document.querySelector('#sidebar').style.width='64px'})
   await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='true')
   assert.equal(await page.locator('[data-voice=mic]').isVisible(),false)
-  assert.equal(await page.locator('#dsh-duet-entry').innerText(),'D')
+  assert.equal(await page.locator('#dsh-duet-entry').innerText(),'d')
   await page.locator('#dsh-duet-entry').hover()
   const mic=await page.locator('[data-voice=mic]').boundingBox(),speaker=await page.locator('[data-voice=speaker]').boundingBox()
   assert.ok(speaker.x>=mic.x+mic.width);assert.ok(Math.abs(mic.y-speaker.y)<2)

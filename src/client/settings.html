@@ -152,7 +152,7 @@
   <footer><span>duet / DeepSeek Harness</span></footer>
 </main>
 <script type="module">
-  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.1.9';
+  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.1.10';
   const base = "/duplex-control/api";
   let debugEnabled = false, settingsRevision = null, feedbackSubmitting = false;
   const composerChannel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("dsh-duplex-control-v1");
@@ -363,7 +363,7 @@
   }
   $('openTutorial').onclick = async () => {
     try {
-      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.1.9');
+      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.1.10');
       requestTutorial(localStorage);
       $('tutorialStatus').textContent = '请回到 DSH 页面继续教学。';
     } catch { $('tutorialStatus').textContent = '暂时无法打开教学，请允许浏览器存储后重试。'; }
@@ -372,11 +372,11 @@
   setInterval(() => { loadDuetConfig().catch(showConnectionUnavailable); }, 2000);
   void loadNotices();
   setInterval(loadNotices, 60000);
-  import('/duet/assets/client/shortcuts.mjs?v=0.1.9').then(({mountShortcutSettings}) => {
+  import('/duet/assets/client/shortcuts.mjs?v=0.1.10').then(({mountShortcutSettings}) => {
     const dispose = mountShortcutSettings({speaker:$('speakerShortcut'),mic:$('micShortcut'),clearSpeaker:$('clearSpeakerShortcut'),clearMic:$('clearMicShortcut'),status:$('shortcutStatus')});
     window.addEventListener('pagehide', e => {if(!e.persisted)dispose()}, {once:true});
   }).catch(() => { $('shortcutStatus').textContent = '暂时无法加载快捷键设置，请刷新重试。'; });
-  import('/duet/assets/client/microphone.mjs?v=0.1.9').then(({mountMicrophoneSettings}) => {
+  import('/duet/assets/client/microphone.mjs?v=0.1.10').then(({mountMicrophoneSettings}) => {
     const dispose = mountMicrophoneSettings({select:$('microphoneDevice'),refresh:$('refreshMicrophones'),status:$('microphoneStatus')});
     window.addEventListener('pagehide', dispose, {once:true});
   }).catch(() => { $('microphoneStatus').textContent = '暂时无法加载麦克风设置，请刷新重试。'; });

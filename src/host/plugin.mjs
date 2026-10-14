@@ -16,6 +16,7 @@ import { broadcastText, taskErrorText } from '../shared/result-notification.mjs'
 import { publicAsset } from './assets.mjs'
 import { duetEnv } from './environment.mjs'
 import { EndpointDiscovery } from './endpoint-discovery.mjs'
+import { StopTasks } from './stop-task.mjs'
 
 const ROUTE = '/duplex-control'
 const PAGE_ROUTE = '/duet'
@@ -165,6 +166,7 @@ export function apply(ctx, options = {}) {
   const composerPollWaiters = new Set()
   const composerRequestOrder = []
   const currentTurn = new Map()
+  const stopTasks = new StopTasks(request => ctx.sessionController.cancel(request))
   const jobByTurn = new Map()
   const pendingInteractions = new Map()
   const browserClients = new Map()
@@ -417,7 +419,7 @@ export function apply(ctx, options = {}) {
     job.completed_at = nowSeconds()
     if (event.data.reason?.kind === 'aborted') {
       job.status = 'failed'
-      job.error = 'Harness turn was aborted, not completed'
+      job.error = '任务执行已终止，未完成。'
     } else if (event.data.reason?.kind === 'error') {
       job.status = 'failed'
       job.error = taskErrorText(event.data.reason.error)
@@ -441,6 +443,7 @@ export function apply(ctx, options = {}) {
     const sessionId = String(session.id)
     if (event.type === 'turn/start') {
       currentTurn.set(sessionId, event.data.turn)
+      stopTasks.start(sessionId, event.data.turn)
       return
     }
     if (event.type === 'user/message') {
@@ -490,10 +493,11 @@ export function apply(ctx, options = {}) {
       return
     }
     if (event.type !== 'turn/end') return
+    stopTasks.end(sessionId, event.data.turn)
     const key = turnKey(sessionId, event.data.turn)
     const id = jobByTurn.get(key)
     const job = id === undefined ? undefined : jobs.get(id)
-    currentTurn.delete(sessionId)
+    if (currentTurn.get(sessionId) === event.data.turn) currentTurn.delete(sessionId)
     jobByTurn.delete(key)
     if (job === undefined) return
     completeJob(job, event)
@@ -832,7 +836,29 @@ export function apply(ctx, options = {}) {
       // A page owns its focus. Do not remove blank sessions using host focus
       // before that page can select its own current blank session.
       const pageCatalog = browserOwner(req) || req.headers['x-duet-catalog-scope'] === 'page'
-      sendJson(res, 200, { sessions: await listSessions({forCatalog:!pageCatalog}) })
+      sendJson(res, 200, { sessions: await listSessions({forCatalog:!pageCatalog}),
+        duet_rpc_capabilities: typeof ctx.sessionController.cancel === 'function' ? ['stop_task_v1'] : [] })
+      return
+    }
+    const stopRoute = pathname.match(new RegExp(`^${ROUTE}/api/sessions/([^/]+)/(execution|cancel)$`))
+    if (stopRoute && ((req.method === 'GET' && stopRoute[2] === 'execution')
+        || (req.method === 'POST' && stopRoute[2] === 'cancel'))) {
+      const owner = browserOwner(req)
+      if (!owner) throw codedError('stop_task_owner_required', '停止操作需要连接所属页面')
+      if (typeof ctx.sessionController.cancel !== 'function') {
+        throw codedError('harness_stop_task_upgrade_required', '请升级 DSH 和 duet 插件后使用停止任务')
+      }
+      const sessionId = decodeURIComponent(stopRoute[1])
+      const body = req.method === 'POST' ? await readJson(req) : null
+      if (req.method === 'POST' && (!body || typeof body !== 'object' || Array.isArray(body)
+          || Object.keys(body).some(k => !['execution_id', 'require_focus'].includes(k))
+          || typeof body.require_focus !== 'boolean')) throw codedError('invalid_stop_request', '无效停止请求', 400)
+      const sessions = await listSessions()
+      if (!sessions.some(s => s.session_id === sessionId)) throw codedError('session_not_found', '会话不存在')
+      // Focus checks run in the owning browser; Host never substitutes global focus.
+      sendJson(res, 200, body
+        ? await stopTasks.request(sessionId, body.execution_id, owner)
+        : { execution: stopTasks.snapshot(sessionId) })
       return
     }
     const composer = pathname.match(new RegExp(`^${ROUTE}/api/sessions/([^/]+)/composer$`))

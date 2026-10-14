@@ -11,15 +11,16 @@ import { HarnessRPCExecutor } from '../../src/client/rpc.mjs'
 import { browserSessionCatalog } from '../../src/client/workspaces.mjs'
 import { RemoteFeedback } from '../../src/host/feedback-files.mjs'
 
-function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRejection } = {}) {
+function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRejection, sessionId = 's1', cancel } = {}) {
   let handler
   const prompted = []
   const creations = [], workspacePaths = []
-  const sessionItems = [{ sessionId: 's1', running: false, projections: { values: { title: '测试' } } }]
+  const sessionItems = [{ sessionId, running: false, projections: { values: { title: '测试' } } }]
   const listeners = new Map()
   const ctx = {
     connection: { requestRejection: () => authRejection },
     sessionController: {
+      ...(cancel ? { cancel } : {}),
       list: () => Promise.resolve({
         items: sessionItems,
       }),
@@ -93,6 +94,33 @@ function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRe
   )
   return { prompted, request, emitWaterfall, emitSession, creations, workspacePaths }
 }
+
+test('stop_task_v1 Host route binds observed execution and emits terminal only after turn/end', async () => {
+  const calls = [], h = makeHarness({cancel: request => {calls.push(request);return {accepted:true}}})
+  const headers = {'x-duet-browser-client':'page1'}
+  const endpoint = '/duplex-control/api/sessions/s1'
+  assert.deepEqual((await h.request('GET','/duplex-control/api/sessions')).body.duet_rpc_capabilities,['stop_task_v1'])
+  assert.equal((await h.request('GET',endpoint+'/execution',undefined,headers)).status,409)
+  h.emitSession('turn/start',{turn:1})
+  h.emitSession('user/message',{source:{kind:'user'},message:{content:[{type:'text',text:'做个网站'}]}})
+  const snapshot = (await h.request('GET',endpoint+'/execution',undefined,headers)).body.execution
+  const payload = {execution_id:snapshot.execution_id,require_focus:true}
+  assert.equal((await h.request('POST',endpoint+'/cancel',payload)).status,409)
+  assert.equal((await h.request('POST',endpoint+'/cancel',payload,headers)).body.accepted,true)
+  assert.equal((await h.request('GET','/duplex-control/api/results?after=0')).body.results.length,0)
+  h.emitSession('turn/end',{turn:1,reason:{kind:'aborted'}})
+  const results = (await h.request('GET','/duplex-control/api/results?after=0')).body.results
+  assert.equal(results[0].status,'failed');assert.match(results[0].error,/已终止/)
+  h.emitSession('turn/start',{turn:2})
+  assert.equal((await h.request('POST',endpoint+'/cancel',payload,headers)).body.accepted,true)
+  assert.equal(calls.length,1)
+  assert.equal((await h.request('POST',endpoint+'/cancel',payload,{'x-duet-browser-client':'page2'})).status,409)
+})
+
+test('DSH without cancel API does not advertise stop capability', async () => {
+  const h = makeHarness()
+  assert.deepEqual((await h.request('GET','/duplex-control/api/sessions')).body.duet_rpc_capabilities,[])
+})
 
 test('duet settings page is canonical and authenticated; legacy entry redirects without changing API routes',async()=>{
   const {request}=makeHarness()
@@ -385,24 +413,28 @@ test('explicit overwrite reaches browser queue without requiring a draft version
   assert.equal((await pending).status, 200)
 })
 
-test('composer RPC edits without submitting and submits the exact browser draft', async () => {
-  const { prompted, request } = makeHarness()
+for (const sessionId of ['s1', 'im:wecom_fixture:dm:123:example']) test(`composer edits and submits exact browser draft for ${sessionId}`, async () => {
+  const { prompted, request } = makeHarness({ sessionId })
+  const path = `/duplex-control/api/sessions/${encodeURIComponent(sessionId)}`
+  assert.equal((await request('POST', `${path}/activate`, {})).body.active_session_id, sessionId)
+  assert.equal((await request('POST', `${path}/rename`, {title:'改名测试'})).status, 200)
+  assert.equal((await request('POST', `${path}/fork`, {})).status, 201)
   const initial = {
-    session_id: 's1',
+    session_id: sessionId,
     text: '实现登录页',
     phase: 'plain',
     revision: 1,
     hash: sha256('实现登录页'),
   }
 
-  const getPromise = request('GET', '/duplex-control/api/sessions/s1/composer')
+  const getPromise = request('GET', `${path}/composer`)
   const getCandidate = await nextComposerRequest(request)
   assert.equal(getCandidate.type, 'get')
   await completeComposerRequest(request, getCandidate, initial)
   assert.deepEqual((await getPromise).body.composer, initial)
 
   const editedText = '实现注册页，并补测试'
-  const putPromise = request('PUT', '/duplex-control/api/sessions/s1/composer', {
+  const putPromise = request('PUT', `${path}/composer`, {
     expected_revision: initial.revision,
     expected_hash: initial.hash,
     text: editedText,
@@ -415,7 +447,7 @@ test('composer RPC edits without submitting and submits the exact browser draft'
   assert.deepEqual((await putPromise).body.composer, edited)
   assert.deepEqual(prompted, [])
 
-  const submitPromise = request('POST', '/duplex-control/api/sessions/s1/composer/submit', {
+  const submitPromise = request('POST', `${path}/composer/submit`, {
     expected_revision: edited.revision,
     expected_hash: edited.hash,
   })

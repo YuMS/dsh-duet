@@ -119,6 +119,7 @@ try {
     const response = await route.fetch()
     let body = await response.text()
     if (body.includes('var PendingQuestion = class')) body = body.replace('var PendingQuestion = class', 'var PendingQuestion = globalThis.__nativeQuestion = class')
+    body = body.replace('const cards = new QuestionCards(', 'const cards = globalThis.__nativeQuestionCards = new QuestionCards(')
     await route.fulfill({ response, body })
   })
   await page.route('**/duet/assets/client/browser.mjs*', async route => {
@@ -213,7 +214,9 @@ try {
     await new Promise(r => setTimeout(r, 100))
     for (let i = 0; i < 10; i++) { access.inputFor(id).setDraft(`连续输入${i}`); await new Promise(r => setTimeout(r, 50)) }
     await new Promise(r => setTimeout(r, 2200)); stop()
-    request.payload.text = ''; const cleared = await access.execute(request)
+    // DSH may remount plugin context after a session title update. Exercise the
+    // currently mounted page owner, not a stale test-only captured facade.
+    request.payload.text = ''; const cleared = await globalThis.__duetAccess.execute(request)
     return { written: written.composer.text, cleared: cleared.composer.text, observations }
   }, sid)
   assert.equal(result.written, '独立插件写入成功'); assert.equal(result.cleared, '')
@@ -285,11 +288,17 @@ try {
   await page.waitForFunction(() => Boolean(globalThis.__nativeQuestion))
   const question = async () => page.evaluate(({ sid }) => {
     const ctx = globalThis.__duetCtx
-    const value = new globalThis.__nativeQuestion(sid, [{ id: 'fixture-color', question: '请选择测试颜色', options: [{ label: '测试蓝色' }, { label: '测试绿色' }] }])
+    const questions = [{ id: 'fixture-color', question: '请选择测试颜色', options: [{ label: '测试蓝色' }, { label: '测试绿色' }] }]
+    const card = globalThis.__nativeQuestionCards?.ensure(sid, questions)
+    const value = card?.pending ?? new globalThis.__nativeQuestion(sid, questions)
     const publish = ctx.uiSession.registerPendingInteraction(() => 1)
-    const remove = publish(value, async () => value.cancel())
+    const remove = card ? () => card.remove() : publish(value, async () => value.cancel?.())
     globalThis.__nativeAnswer = null
-    value.result.then(answer => { globalThis.__nativeAnswer = answer; remove() })
+    if (value.attachWaterfall) {
+      value.attachWaterfall({deadline:undefined,
+        resolve:answer=>{globalThis.__nativeAnswer=answer;remove();value.close()},
+        reject:()=>{remove();value.close()}, delegate:()=>{remove();value.close()}})
+    } else value.result.then(answer => { globalThis.__nativeAnswer = answer; remove() })
     return value.key
   }, { sid })
   const firstQuestion = await question()

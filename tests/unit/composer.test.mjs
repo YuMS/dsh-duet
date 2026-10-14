@@ -6,6 +6,23 @@ import { HarnessRPCExecutor } from '../../src/client/rpc.mjs'
 globalThis.crypto ??= webcrypto
 const settle = () => new Promise(resolve => setImmediate(resolve))
 
+test('IM composer routes decode once and preserve the exact DSH session ID', async () => {
+  const id = 'im:wecom_fixture:dm:123:example'
+  let state = {draft:'', draftRev:0, phase:'plain'}
+  const input = {state:{getSnapshot:()=>state}, setDraft:text=>{state={...state,draft:text,draftRev:state.draftRev+1}}}
+  const ctx = {sessions:{list:{getSnapshot:()=>({current:id})}, scope: sid=>{assert.equal(sid,id);return {id:sid}}},
+    conversation:{input:{for:scope=>{assert.equal(scope.id,id);return input}}}}
+  const access = composerAccess(ctx, ()=>'企业微信会话')
+  assert.equal((await access.read()).session_id,id)
+  for (const segment of [id, encodeURIComponent(id)]) {
+    const path = `/api/sessions/${segment}/composer`
+    const written = await access.execute({method:'PUT',path,payload:{text:'新的内容',overwrite:true,require_focus:true}})
+    assert.equal(written.composer.session_id,id)
+    assert.equal(written.composer.text,'新的内容')
+    assert.equal((await access.execute({method:'GET',path})).composer.session_id,id)
+  }
+})
+
 test('focus follows the main conversation, not background references', () => {
   let snapshot = { current: 'old' }
   const ctx = { sessions: { list: { getSnapshot: () => snapshot } } }

@@ -169,7 +169,7 @@ test('server compatibility is a configured semver range, missing and future vers
 
 test('PCM acknowledgements follow playback time, not received bytes; old audio stays cleared', () => {
   const audio = new DuetAudio(), sent = []
-  audio.context = { currentTime: 0, destination: {}, createBuffer: (_, n) => ({ getChannelData: () => new Float32Array(n) }), createBufferSource: () => ({ connect() {}, disconnect() {}, start() {}, stop() {} }) }
+  audio.context = { currentTime: 0, destination: {}, createBuffer: (_, n) => ({ getChannelData: () => new Float32Array(n) }), createGain: () => ({connect(){},disconnect(){},gain:{setValueAtTime(){},linearRampToValueAtTime(){}}}), createBufferSource: () => ({ connect() {}, disconnect() {}, start() {}, stop() { this.onended?.() } }) }
   const event = { type: 'response.output_audio.delta', response_id: 'r', generation: 1, sample_rate: 16000, delta: Buffer.alloc(32000).toString('base64') }
   audio.event(event, x => sent.push(x))
   audio.progress(x => sent.push(x))

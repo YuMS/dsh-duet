@@ -9,7 +9,7 @@ try {
   const diagnostics=[]
   await context.route('http://127.0.0.1:19361/**',async route=>{
     const path=new URL(route.request().url()).pathname
-    if(path==='/duet/assets/client/audio.mjs')return route.fulfill({contentType:'text/javascript',body:'export class DuetAudio {prepare(){return Promise.resolve()}startMic(send,failed,report){window.captureFailed=failed;report({event:"browser.microphone_granted"});report({event:"browser.capture_started"});send(new ArrayBuffer(2560));return Promise.resolve()}stop(){}event(){}progress(){}playing(){return false}connectedChime(){}}'})
+    if(path==='/duet/assets/client/audio.mjs')return route.fulfill({contentType:'text/javascript',body:'export const AUDIO_STOP_PROTOCOL="audio_stop_candidates_v1"; export class DuetAudio {prepare(){return Promise.resolve()}startMic(send,failed,report){window.captureFailed=failed;report({event:"browser.microphone_granted"});report({event:"browser.capture_started"});send(new ArrayBuffer(2560));return Promise.resolve()}stop(){}event(){}progress(){}playing(){return false}connectedChime(){}}'})
     if(path.endsWith('.mjs'))return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.replace('/duet/assets/',''),import.meta.url),'utf8')})
     if(path.includes('/api/')){
       if(path.endsWith('/voice/diagnostic'))diagnostics.push(route.request().postDataJSON())

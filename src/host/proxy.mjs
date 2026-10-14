@@ -172,7 +172,9 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
               if (initialized) throw new Error('voice_mode_requires_reconnect')
               initialized = true
               forward(JSON.stringify({ type: 'session.update',
-                client: {...clientMetadata, diagnostics_protocol:DIAGNOSTICS_PROTOCOL},
+                client: {...clientMetadata, diagnostics_protocol:DIAGNOSTICS_PROTOCOL,
+                  ...(message.client?.audio_stop_protocol === 'audio_stop_candidates_v1'
+                    ? {audio_stop_protocol:'audio_stop_candidates_v1'} : {})},
                 session: {
                 type: 'realtime', preset_id: 'server_default',
                 io_mode:mode === 'tts_only'?'external_only':'online',

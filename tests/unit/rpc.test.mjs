@@ -1,5 +1,22 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+
+test('IM session RPC accepts raw and encoded colons without widening paths', () => {
+  for (const key of ['question:s1:call_1', 'question%3Aim%3Awecom_fixture%3Adm%3A123%3Auser%3Acall_1']) {
+    assert.doesNotThrow(() => validateRPC(message({method:'POST',path:`/api/interactions/${key}/respond`})))
+  }
+  for (const id of ['s1', 'im:wecom_fixture:dm:123:example', 'im%3Awecom_fixture%3adm%3A123%3Aexample']) {
+    for (const [method, suffix] of [['GET','composer'], ['PUT','composer'], ['POST','composer/submit'], ['POST','activate'], ['POST','rename'], ['POST','fork']]) {
+      const request = message({ method, path: `/api/sessions/${id}/${suffix}` })
+      assert.doesNotThrow(() => validateRPC(request))
+      if (suffix === 'activate') assert.equal(rpcNavigationSession(request, {active_session_id: 'target'}), 'target')
+      if (suffix === 'fork') assert.equal(rpcNavigationSession(request, {session: {session_id: 'child'}}), 'child')
+    }
+  }
+  for (const id of ['../s1', 'a/b', 'a%2Fb', 'a%5Cb', 'a%253Ab', 'a%00b', 'a?x=1', 'a#fragment', 'a'.repeat(257)]) {
+    assert.throws(() => validateRPC(message({method:'PUT',path:`/api/sessions/${id}/composer`})), /harness_rpc_route_not_allowed/)
+  }
+})
 import { HarnessRPCExecutor, validateRPC, rpcNavigationSession } from '../../src/client/rpc.mjs'
 import { sessionCreationPayload } from '../../src/client/workspaces.mjs'
 

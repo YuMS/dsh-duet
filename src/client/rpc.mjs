@@ -1,14 +1,17 @@
 /** Reverse RPC executes on this authenticated DSH origin, never a supplied URL. */
 import { orderSessionCatalog, readWorkspaceView } from '../shared/catalog.mjs'
 const MAX_BYTES = 2_000_000
-const READ = /^\/api\/(?:health|sessions|jobs|results|interactions|composer\/focused|sessions\/[A-Za-z0-9_-]+\/composer)$/
-const WRITE = /^\/api\/(?:sessions|sessions\/[A-Za-z0-9_-]+\/(?:composer\/submit|activate|rename|fork)|interactions\/(?:(?:question|approval)(?::|%3[Aa]))?[A-Za-z0-9_-]+\/respond)$/
+// Only colons may be escaped in a session segment: never decode arbitrary paths.
+const SESSION = '(?:[A-Za-z0-9_:-]|%3[Aa]){1,256}'
+const READ = new RegExp(`^/api/(?:health|sessions|jobs|results|interactions|composer/focused|sessions/${SESSION}/(?:composer|execution))$`)
+const WRITE = new RegExp(`^/api/(?:sessions|sessions/${SESSION}/(?:composer/submit|activate|rename|fork|cancel)|interactions/(?:(?:question|approval)(?::|%3[Aa])(?:[A-Za-z0-9_:-]|%3[Aa]){1,1024}|[A-Za-z0-9_-]{1,256})/respond)$`)
+const sessionRoute = (path, suffix) => new RegExp(`^/api/sessions/${SESSION}/${suffix}$`).test(path)
 
 // Navigate only the connection-owning page after a successful mutation.
 export function rpcNavigationSession(request, body) {
   if (request.method !== 'POST') return null
-  if (/^\/api\/sessions\/[A-Za-z0-9_-]+\/activate$/.test(request.path)) return body.active_session_id
-  if (request.path === '/api/sessions' || /^\/api\/sessions\/[A-Za-z0-9_-]+\/fork$/.test(request.path)) return body.session?.session_id
+  if (sessionRoute(request.path, 'activate')) return body.active_session_id
+  if (request.path === '/api/sessions' || sessionRoute(request.path, 'fork')) return body.session?.session_id
   return null
 }
 
@@ -17,8 +20,12 @@ export function validateRPC(request) {
     || !/^[a-f0-9]{32}$/.test(request.connection_id || '')) throw new Error('invalid_harness_rpc')
   if (!((request.method === 'GET' && READ.test(request.path))
     || (request.method === 'POST' && WRITE.test(request.path))
-    || (request.method === 'PUT' && /^\/api\/sessions\/[A-Za-z0-9_-]+\/composer$/.test(request.path)))) throw new Error('harness_rpc_route_not_allowed')
+    || (request.method === 'PUT' && sessionRoute(request.path, 'composer')))) throw new Error('harness_rpc_route_not_allowed')
   if (new TextEncoder().encode(JSON.stringify(request)).length > MAX_BYTES) throw new Error('harness_rpc_too_large')
+  if (sessionRoute(request.path, 'cancel') && (typeof request.payload?.execution_id !== 'string'
+    || !/^[a-f0-9-]{36}$/.test(request.payload.execution_id)
+    || typeof request.payload.require_focus !== 'boolean'
+    || Object.keys(request.payload).some(k => !['execution_id','require_focus'].includes(k)))) throw new Error('invalid_stop_request')
   if (request.params != null) {
     const focus = /\/composer$/.test(request.path) && JSON.stringify(request.params) === '{"require_focus":"true"}'
     const results = request.path === '/api/results' && typeof request.params === 'object'
@@ -73,6 +80,13 @@ export class HarnessRPCExecutor {
     const envelope = { type: 'harness.rpc.response', connection_id: request.connection_id, request_id: request.request_id }
     try {
       let payload = request.payload ?? {}
+      if (sessionRoute(request.path, '(?:execution|cancel)')) {
+        if (!this.stopSupported || !this.binding.id) return { ...envelope, status:409,
+          body:{error_code:'harness_stop_task_upgrade_required'} }
+        const id = decodeURIComponent(request.path.split('/')[3])
+        if (payload.require_focus && this.binding.focused?.() !== id) return { ...envelope, status:409,
+          body:{error_code:'focus_conflict'} }
+      }
       if (request.method === 'POST' && request.path === '/api/sessions' && this.binding.creationPayload) {
         try { payload = this.binding.creationPayload(payload) }
         catch (error) { return { ...envelope, status: 409, body: { error_code: error.code || error.message || 'workspace_selection_required' } } }
@@ -104,7 +118,10 @@ export class HarnessRPCExecutor {
       controller.signal.throwIfAborted()
       if (response.ok && this.binding.completed) await this.binding.completed(request, body, controller.signal)
       if (response.status === 200 && request.method === 'GET' && request.path === '/api/sessions' && Array.isArray(body.sessions)) {
+        this.stopSupported = body.duet_rpc_capabilities?.includes('stop_task_v1') === true
+          && typeof this.binding.focused === 'function'
         body.duet_rpc_capabilities = ['create_session_v1',
+          ...(this.stopSupported ? ['stop_task_v1'] : []),
           ...(this.binding.syncSupported?.() === false ? [] : ['harness_sync_v1'])]
         // Both startup prompt and nth_N resolution read this same browser-local
         // order, including manual drag order; archived rows cannot consume ranks.

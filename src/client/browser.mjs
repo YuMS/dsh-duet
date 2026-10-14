@@ -1,25 +1,25 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.9'
-import { DuetAudio } from './audio.mjs?v=0.1.9'
-import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.1.9'
-import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.9'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.1.9'
-import { mountTutorial } from './tutorial.mjs?v=0.1.9'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.9'
-import { mountRating } from './feedback.mjs?v=0.1.9'
-import { createAudioUploadConsent } from './consent.mjs?v=0.1.9'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.9'
-import { nativeInteractions } from './interactions.mjs?v=0.1.9'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.1.9'
-import { mountControlsLayout } from './controls-layout.mjs?v=0.1.9'
-import { mountNotice } from './notice.mjs?v=0.1.9'
-import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.1.9'
-import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.9'
-import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.1.9'
-import { sessionLabel } from '../shared/catalog.mjs?v=0.1.9'
-import { resultNotification } from '../shared/result-notification.mjs?v=0.1.9'
-import { HarnessSync } from './harness-sync.mjs?v=0.1.9'
-import { LocalSync } from './local-sync.mjs?v=0.1.9'
-import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.1.9'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.10'
+import { DuetAudio, AUDIO_STOP_PROTOCOL } from './audio.mjs?v=0.1.10'
+import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.1.10'
+import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.10'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.1.10'
+import { mountTutorial } from './tutorial.mjs?v=0.1.10'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.10'
+import { mountRating } from './feedback.mjs?v=0.1.10'
+import { createAudioUploadConsent } from './consent.mjs?v=0.1.10'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.10'
+import { nativeInteractions } from './interactions.mjs?v=0.1.10'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.1.10'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.1.10'
+import { mountNotice } from './notice.mjs?v=0.1.10'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.1.10'
+import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.10'
+import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.1.10'
+import { sessionLabel } from '../shared/catalog.mjs?v=0.1.10'
+import { resultNotification } from '../shared/result-notification.mjs?v=0.1.10'
+import { HarnessSync } from './harness-sync.mjs?v=0.1.10'
+import { LocalSync } from './local-sync.mjs?v=0.1.10'
+import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.1.10'
 
 export function mountDuet(ctx) {
   const pageId = crypto.randomUUID()
@@ -119,6 +119,7 @@ export function mountDuet(ctx) {
       (await interactions(request, signal)) ?? composer.execute(request, signal), rows =>
         browserSessionCatalog(ctx, rows).map(row => ({ ...row, active: row.session_id === focusedSession(ctx) })), {
           id: connectionTraceId,
+          focused: () => focusedSession(ctx),
           syncSupported: () => localSync?.active && interactions.supportsSync,
           creationPayload: payload => sessionCreationPayload(ctx, payload),
           completed: async (request, body, signal) => {
@@ -173,7 +174,7 @@ export function mountDuet(ctx) {
       ws = new WebSocket(voiceSocketUrl({ mode, plugin_version: PLUGIN_VERSION, client_trace_id: connectionTraceId, page_id: pageId }), identityVoiceProtocols())
       ws.onopen = () => {
         report({ event: 'browser.connection_start', page_binding: 'connection_owner_v1' })
-        send({ type: 'session.update' })
+        send({ type: 'session.update', client: {audio_stop_protocol:AUDIO_STOP_PROTOCOL} })
         if (mode === 'online') stopComposer = observeComposer(ctx, composer, send)
       }
       ws.onmessage = async event => {

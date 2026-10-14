@@ -26,7 +26,11 @@ export function nativeInteractions(ctx) {
     if (value.kind === 'approval') {
       if (!['allowed-once', 'rejected'].includes(payload.outcome)) throw Error('invalid_approval_outcome')
       await value.answer(payload.outcome)
-    } else if (payload.cancelled === true) await value.cancel()
+    } else if (payload.cancelled === true) {
+      if (typeof value.cancel === 'function') await value.cancel()
+      else if (value.dismissal === 'cancel' && typeof value.dismiss === 'function') await value.dismiss()
+      else throw Object.assign(Error('当前问题不能直接取消，请在 DSH 中处理。'), {code:'question_cancel_unavailable'})
+    }
     else {
       if (!Array.isArray(payload.answers)) throw Error('invalid_question_answers')
       await value.answer({ answers: payload.answers })

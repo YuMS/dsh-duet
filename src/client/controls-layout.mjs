@@ -82,7 +82,7 @@ export function mountControlsLayout(controls) {
     controls.style.justifyContent = compact ? 'center' : ''
     controls.style.minWidth = '0'
     entry.style.cssText = initial.entry
-    if (label) label.textContent = compact ? 'D' : labelText
+    if (label) label.textContent = compact ? 'd' : labelText
     if (compact) {
       entry.style.cssText += ';display:flex;align-items:center;gap:2px;margin:0;padding:4px;box-sizing:border-box;min-width:32px;height:32px;font-size:23px;cursor:pointer'
       entry.setAttribute('role', 'button'); entry.tabIndex = 0

@@ -66,6 +66,17 @@ async function fixture(t, rejectStatus, overrides = {}) {
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+test('only browser-advertised audio-stop support crosses the handshake',async t=>{
+  for (const protocol of [undefined,'unknown','audio_stop_candidates_v1']) {
+    const f=await fixture(t),ws=f.connect('online')
+    await once(ws,'open');const ready=next(ws)
+    ws.send(JSON.stringify({type:'session.update',client:{audio_stop_protocol:protocol}}))
+    await ready
+    assert.equal(f.messages.find(m=>m.type==='session.update').client.audio_stop_protocol,
+      protocol==='audio_stop_candidates_v1'?protocol:undefined)
+    ws.close();await once(ws,'close')
+  }
+})
 test('diagnostics are uploaded after close and never forwarded to workers',async t=>{
   for(const mode of ['online','tts_only']){
     const f=await fixture(t,null,{diagnostics:true}),ws=await begin(f,mode)

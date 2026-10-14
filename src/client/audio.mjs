@@ -1,4 +1,6 @@
-import { microphoneConstraints } from './microphone.mjs?v=0.1.9'
+import { microphoneConstraints } from './microphone.mjs?v=0.1.10'
+
+export const AUDIO_STOP_PROTOCOL = 'audio_stop_candidates_v1'
 
 /** Browser-owned microphone and PCM playback. No microphone is requested in tts_only. */
 export class DuetAudio {
@@ -99,7 +101,7 @@ export class DuetAudio {
 
   event(event, send) {
     const key = `${event.response_id}:${event.generation}`
-    if (event.type === 'output_audio_buffer.clear') { this.cleared.add(key); this.clear(send); return }
+    if (event.type === 'output_audio_buffer.clear') { this.interrupt(event, send); return }
     if (event.type === 'response.output_audio.done') {
       const response = this.responses.get(key)
       if (response) { response.done = true; this.progress(send) }
@@ -115,33 +117,100 @@ export class DuetAudio {
     for (let i = 0; i < pcm.length; i++) data[i] = pcm[i] / 32768
     const node = this.context.createBufferSource()
     node.buffer = buffer
-    node.connect(this.context.destination)
+    const gain = this.context.createGain()
+    node.connect(gain)
+    gain.connect(this.context.destination)
     const start = Math.max(this.context.currentTime + 0.04, this.nextTime)
     this.nextTime = start + pcm.length / rate
-    const response = this.responses.get(key) || { response_id: event.response_id, generation: event.generation, played: 0, basePlayed: 0, chunks: [] }
-    response.chunks.push({ start, samples: pcm.length, rate })
+    const response = this.responses.get(key) || { response_id: event.response_id, generation: event.generation, played: 0, basePlayed: 0, received: 0, chunks: [] }
+    const chunk = { start, samples: pcm.length, rate, sampleStart: response.received, node, gain, ended: false }
+    response.received += pcm.length
+    response.chunks.push(chunk)
     this.responses.set(key, response)
     this.nodes.add(node)
-    node.onended = () => { this.nodes.delete(node); node.disconnect(); this.progress(send) }
+    node.onended = () => {
+      chunk.ended = true
+      this.nodes.delete(node); node.disconnect(); gain.disconnect()
+      this.progress(send)
+      this.finishStop(key, response, send)
+    }
     node.start(start)
+  }
+
+  playedAt(r, time) {
+    const until = Math.min(time, r.stopAt ?? Infinity)
+    return r.chunks.reduce((n, c) => n + Math.min(c.samples, Math.max(0,
+      Math.floor((until - c.start) * c.rate + 1e-6))), r.basePlayed)
   }
 
   progress(send) {
     if (!this.context) return
     for (const [key, r] of this.responses) {
-      const played = r.chunks.reduce((n, c) => n + Math.min(c.samples, Math.max(0, Math.floor((this.context.currentTime - c.start) * c.rate))), r.basePlayed)
+      const played = this.playedAt(r, this.context.currentTime)
       if (played > r.played) {
         r.played = played
         send({ type: 'output_audio_buffer.playback_progress', response_id: r.response_id, generation: r.generation, played_samples: played })
       }
-      while (r.chunks.length && this.context.currentTime >= r.chunks[0].start + r.chunks[0].samples / r.chunks[0].rate) {
+      while (!r.stopping && r.chunks.length && this.context.currentTime >= r.chunks[0].start + r.chunks[0].samples / r.chunks[0].rate) {
         r.basePlayed += r.chunks.shift().samples
       }
-      if (r.done && !r.chunks.length) this.responses.delete(key)
+      if (r.done && !r.stopping && !r.chunks.length) this.responses.delete(key)
     }
   }
 
   playing() { return this.nodes.size > 0 }
+
+  interrupt(event, send) {
+    const key = `${event.response_id}:${event.generation}`
+    if (this.cleared.has(key)) return
+    this.cleared.add(key)
+    const r = this.responses.get(key)
+    if (!r || !this.context) return
+    const now = this.context.currentTime, played = this.playedAt(r, now)
+    const smooth = event.audio_stop_protocol === AUDIO_STOP_PROTOCOL
+    const bound = Number.isFinite(event.max_wait_ms) ? Math.max(0, Math.min(300, event.max_wait_ms)) / 1000 : 0.3
+    const fadeMs = Number.isFinite(event.fade_ms) ? Math.max(0, Math.min(12, event.fade_ms)) : 12
+    const fade = smooth ? Math.min(fadeMs / 1000, bound) : 0
+    let cut = now + fade, selected = null, reason = 'immediate_fallback'
+    const candidates = event.stop_candidates_samples
+    const valid = smooth && Array.isArray(candidates) && candidates.length <= 3 &&
+      candidates.every((v, i) => Number.isSafeInteger(v) && v >= 0 && v <= r.received && (!i || v > candidates[i - 1]))
+    if (valid) {
+      for (const sample of candidates) {
+        if (sample <= played) continue
+        const c = r.chunks.find(c => c.sampleStart < sample && sample <= c.sampleStart + c.samples)
+        if (!c) continue
+        const when = c.start + (sample - c.sampleStart) / c.rate
+        if (when > now && when <= now + bound) { cut = when; selected = sample; reason = 'candidate'; break }
+      }
+    }
+    r.stopping = true; r.stopAt = cut; r.stopReason = reason; r.selectedStop = selected
+    for (const c of r.chunks) {
+      if (c.ended) continue
+      const end = c.start + c.samples / c.rate
+      const fadeStart = Math.max(now, cut - fade)
+      if (end > fadeStart) {
+        c.gain.gain.setValueAtTime(1, fadeStart)
+        c.gain.gain.linearRampToValueAtTime(0, cut)
+      }
+      if (end >= cut) c.node.stop(c.start >= cut ? now : cut)
+    }
+    // Only the interrupted response is shortened. A newer response keeps its queue.
+    this.nextTime = Math.max(now, ...[...this.responses.values()].flatMap(response =>
+      response.chunks.filter(c => !c.ended).map(c => Math.min(
+        c.start + c.samples / c.rate, response.stopAt ?? Infinity))))
+    this.finishStop(key, r, send)
+  }
+
+  finishStop(key, r, send) {
+    if (!r.stopping || r.acknowledged || r.chunks.some(c => !c.ended)) return
+    r.acknowledged = true
+    const played = this.playedAt(r, this.context.currentTime)
+    send({type:'output_audio_buffer.cleared', response_id:r.response_id, generation:r.generation,
+      played_samples:played, audio_stop_protocol:AUDIO_STOP_PROTOCOL,
+      selected_stop_sample:r.selectedStop, stop_reason:r.stopReason})
+    this.responses.delete(key)
+  }
 
   clear(send = () => {}) {
     this.progress(send)
@@ -149,6 +218,7 @@ export class DuetAudio {
       this.cleared.add(key)
       send({ type: 'output_audio_buffer.cleared', response_id: r.response_id, generation: r.generation, played_samples: r.played })
     }
+    for (const r of this.responses.values()) for (const c of r.chunks) c.gain.disconnect()
     for (const node of this.nodes) { node.onended = null; node.stop(); node.disconnect() }
     this.nodes.clear()
     this.responses.clear()

@@ -18,7 +18,7 @@ try {
   await page.goto('http://layout.test/')
   const entry=page.locator('#dsh-duet-entry'),actions=page.locator('[data-duet-actions]')
   await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='true')
-  assert.equal(await entry.textContent(),'D.')
+  assert.equal(await entry.textContent(),'d.')
   assert.ok((await page.locator('#controls').boundingBox()).height<=40)
   assert.equal(await actions.isVisible(),false)
   await page.locator('#hostSettings').click()
@@ -65,7 +65,7 @@ try {
   for(let i=0;i<2;i++){
     await page.evaluate(()=>{const s=document.querySelector('#sidebar');s.style.width='56px';s.style.padding='0 10px'})
     await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='true')
-    assert.equal(await entry.textContent(),'D.')
+    assert.equal(await entry.textContent(),'d.')
     assert.ok(await page.locator('#slot').evaluate(e=>e.getBoundingClientRect().width)<=36)
     const launcher=await entry.boundingBox(),settings=await page.locator('#hostSettings').boundingBox()
     assert.ok(settings.y>=launcher.y+launcher.height)
