@@ -1,7 +1,7 @@
 /** Composer requests belong to one explicit voice/tutorial connection, never all tabs. */
-import { focusedSession as currentSession } from './composer.mjs?v=0.1.10'
+import { focusedSession as currentSession } from './composer.mjs?v=0.2.0'
 
-export function startComposerBridge(ctx, clientId, fetchImpl = fetch, feed = null) {
+export function startComposerBridge(ctx, clientId, fetchImpl = fetch, feed = null, onWrite = () => {}) {
   const focusedSession = () => currentSession(ctx)
   const bridgeFetch = async (url, options = {}, timeoutMs = 8000) => {
     const request = new AbortController()
@@ -99,6 +99,9 @@ export function startComposerBridge(ctx, clientId, fetchImpl = fetch, feed = nul
       input.setDraft(["clear", "consume"].includes(request.type) ? "" : String(request.text ?? ""))
       await new Promise(resolve => setTimeout(resolve, 0))
       const after = await composerState(request.session_id, input)
+      if(request.type==='set' && !controller.signal.aborted && focusedSession()===request.session_id){
+        try{onWrite(after.text,request.session_id)}catch{ /* Presentation never fails an applied edit. */ }
+      }
       if (consumed !== null) {
         return {
           ...after,

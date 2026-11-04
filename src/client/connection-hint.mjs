@@ -1,8 +1,9 @@
 /** A brief, non-modal invitation after the microphone is actually ready. */
-import {normalizeGuidance} from '../shared/connection-guidance.mjs?v=0.1.10'
+import {normalizeGuidance} from '../shared/connection-guidance.mjs?v=0.2.0'
 export function mountConnectionHint(controls, { duration = 8000, onShown = ()=>{} } = {}) {
   const hint = document.createElement('div')
   hint.dataset.duetConnectionHint = ''
+  hint.dataset.duetAvatarSurface = '30'
   hint.setAttribute('role', 'status')
   hint.setAttribute('aria-live', 'polite')
   hint.hidden = true

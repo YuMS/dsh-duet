@@ -1,5 +1,5 @@
 /** Opt-in walkthrough. All writes are limited to sessions created by this run. */
-import {consumeTutorialRequest} from './tutorial-request.mjs?v=0.1.10'
+import {consumeTutorialRequest} from './tutorial-request.mjs?v=0.2.0'
 export const TUTORIAL_KEY = 'dsh-duplex-tutorial-v1'
 export const QUESTION = '什么是语音交互？请用一句话简单解释，不使用工具。'
 export const INPUT = '用一句话介绍语音助手。'
@@ -113,7 +113,7 @@ export class TutorialRun {
   }
 }
 
-export function mountTutorial({ controls, adapter }) {
+export function mountTutorial({ controls, adapter, origin='page' }) {
   const element = (tag, text, parent) => { const n = document.createElement(tag); if (text) n.textContent = text; parent?.append(n); return n }
   let run, closed = false, panel, highlight, pointer, lockRelease, active = false
   const get = (store, key) => { try { return store.getItem(key) } catch { return null } }
@@ -166,6 +166,7 @@ export function mountTutorial({ controls, adapter }) {
       document.body.append(pointer)
     }
     panel=element('section',null,document.body); panel.className='duet-tutorial'; panel.setAttribute('role','region'); panel.setAttribute('aria-label','duet 使用教学')
+    panel.dataset.duetAvatarSurface='80';panel.dataset.duetSurfaceOrigin=origin;panel.dataset.duetSurfaceTarget=selector?.includes('speaker')?'tts_only':selector?.includes('mic')?'online':''
     element('small', finished?'duet':active ? 'duet / GUIDED TOUR · 可随时退出' : 'WELCOME TO duet',panel)
     element('h3',title,panel); element('p',text,panel)
     const footer=element('footer',null,panel)
@@ -260,9 +261,10 @@ export function mountTutorial({ controls, adapter }) {
       void adapter.unlock().then(()=>{if(!closed&&view.panel.isConnected)return start(consent)}).catch(fail)
     },true)
     b.disabled=true;sound.onchange=chat.onchange=()=>{b.disabled=!(sound.checked&&chat.checked)}
+    b.dataset.duetUserGesture=''
     position()
   }
-  const open = () => { if(!active)welcome() }
+  const open = (options={}) => { if(!active){origin=options.origin==='avatar'?'avatar':'page';welcome()} }
   const onKey=e=>{if(e.key==='Escape'&&panel)void dismiss()}
   window.addEventListener('resize',position);window.addEventListener('scroll',position,true);window.addEventListener('keydown',onKey)
   const layoutTimer=setInterval(position,300)

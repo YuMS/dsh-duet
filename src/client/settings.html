@@ -90,6 +90,25 @@
     </details>
   </section>
   <section class="panel" style="margin-bottom:18px">
+    <h2>助手昵称</h2>
+    <label for="assistantNickname">给助手起个名字</label>
+    <input id="assistantNickname" type="text" placeholder="duet" autocomplete="off">
+    <p class="section-note">最多 5 个汉字或 2 个英文单词；中英文混用时最多 5 个字符。</p>
+    <button id="saveNickname" type="button" disabled>保存昵称</button>
+    <p id="nicknameStatus" class="muted" role="status" aria-live="polite"></p>
+  </section>
+  <section class="panel" style="margin-bottom:18px">
+    <h2>3D 形象</h2>
+    <label><input id="avatarEnabled" type="checkbox" style="width:auto"> 打开3D形象（实验）</label>
+    <label><input id="avatarWebOnly" type="checkbox" style="width:auto"> 仅在网页端显示（适用于dsh装在服务器）</label>
+    <label for="avatarSize">形象大小</label>
+    <button id="avatarSize" type="button" style="display:inline-flex;align-items:center;gap:10px;width:auto"></button>
+    <p class="section-note">形象可以陪伴在桌面上，也可以显示在 duet 栏上方。打开形象不会开启语音。</p>
+    <p id="avatarPresentationStatus" class="muted" role="status">当前显示：等待 DSH 页面连接</p>
+    <button id="avatarRetryDesktop" type="button" hidden>重试桌面显示</button>
+    <p id="avatarSettingsStatus" class="muted" role="status"></p>
+  </section>
+  <section class="panel" style="margin-bottom:18px">
     <h2>麦克风</h2>
     <label for="microphoneDevice">交互模式使用的设备</label>
     <select id="microphoneDevice" disabled><option value="">系统默认麦克风</option></select>
@@ -152,13 +171,46 @@
   <footer><span>duet / DeepSeek Harness</span></footer>
 </main>
 <script type="module">
-  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.1.10';
+  import { AVATAR_KEY, AVATAR_PRESENTATION_LABELS, avatarPreferences, saveAvatarPreferences } from '/duet/assets/shared/avatar.mjs';
+  import { sizeButton, nextAvatarSize, avatarCloseConfirmation } from '/duet/assets/shared/avatar-ui.mjs';
+  const avatarConfirm=avatarCloseConfirmation();
+  const avatarChannel = typeof BroadcastChannel==='undefined'?null:new BroadcastChannel(AVATAR_KEY);
+  const avatarRead = () => {const p=avatarPreferences();document.getElementById('avatarEnabled').checked=p.enabled;document.getElementById('avatarWebOnly').checked=p.webOnly;sizeButton(document.getElementById('avatarSize'),p.size,{label:true});};
+  avatarRead();
+  const avatarStorage=e=>{if(e.key===AVATAR_KEY)avatarRead();};
+  window.addEventListener('storage',avatarStorage);
+  if(avatarChannel){
+    avatarChannel.onmessage=e=>{
+      avatarRead()
+      const mode=e.data?.type==='presentation'?e.data.mode:null
+      if(Object.hasOwn(AVATAR_PRESENTATION_LABELS,mode)){
+        document.getElementById('avatarPresentationStatus').textContent=AVATAR_PRESENTATION_LABELS[mode]
+        document.getElementById('avatarRetryDesktop').hidden=!['recovering','fallback','unavailable'].includes(mode)
+      }
+    }
+    avatarChannel.postMessage({type:'presentation_request'})
+  }
+  document.getElementById('avatarRetryDesktop').onclick=()=>avatarChannel?.postMessage({type:'retry_desktop'});
+  const avatarSave=patch=>{
+    try {saveAvatarPreferences({...avatarPreferences(),...patch});avatarRead();avatarChannel?.postMessage('changed');document.getElementById('avatarSettingsStatus').textContent='已保存';}
+    catch {document.getElementById('avatarSettingsStatus').textContent='设置未保存，请检查浏览器存储权限。';avatarRead();}
+  };
+  document.getElementById('avatarSize').onclick=()=>avatarSave({size:nextAvatarSize(avatarPreferences().size)});
+  document.getElementById('avatarWebOnly').onchange=e=>avatarSave({webOnly:e.target.checked});
+  document.getElementById('avatarEnabled').onchange=async e=>{
+    const enabled=e.target.checked;avatarRead();
+    if(enabled||await avatarConfirm.ask())avatarSave({enabled});
+  };
+  window.addEventListener('pagehide',()=>{avatarConfirm.dispose();avatarChannel?.close();window.removeEventListener('storage',avatarStorage);},{once:true});
+  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.2.0';
   const base = "/duplex-control/api";
   let debugEnabled = false, settingsRevision = null, feedbackSubmitting = false;
+  let nicknameDirty = false, nicknameRevision = null;
   const composerChannel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("dsh-duplex-control-v1");
   const composerPending = new Map();
   const sessionLabels = new Map();
   const $ = id => document.getElementById(id);
+  $('assistantNickname').oninput = () => { nicknameDirty = true; };
   const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   async function api(path, options = {}) {
     const response = await identityFetch(base + path, {headers:{"Content-Type":"application/json"}, ...options});
@@ -291,6 +343,8 @@
   async function refresh() { try { await Promise.all([loadSessions(), loadJobs()]); } catch (error) { showMessage(error.message, true); } }
   async function loadDuetConfig(fill = false) {
     const config = await api('/voice/config');
+    $('avatarWebOnly').disabled = config.avatar?.web_only === true;
+    if (config.avatar?.web_only) $('avatarWebOnly').checked = true;
     showConnectionStatus(config);
     const c = config.connection || {};
     $('duetMark').style.color = c.online || c.tts_only ? '#7fd6a6' : '#ed9b35';
@@ -304,9 +358,15 @@
       settingsRevision = config.revision;
       $('backendUrl').value = config.backend_url || '';
     }
+    if (fill || !nicknameDirty) {
+      nicknameRevision = config.revision;
+      $('assistantNickname').value = config.nickname || '';
+      nicknameDirty = false;
+    }
     $('authState').textContent = config.backend_url ? '已配置' : '待配置';
     $('pluginVersion').textContent = config.plugin_version || '—';
     $('saveDuet').disabled = false;
+    $('saveNickname').disabled = false;
     $('submitFeedback').disabled = feedbackSubmitting || config.feedback_enabled !== true;
     if(config.feedback_enabled !== true)$('feedbackStatus').textContent = '反馈暂时不可用，请稍后再试。';
     else if($('feedbackStatus').textContent.startsWith('正在检查') || $('feedbackStatus').textContent.startsWith('反馈暂时'))$('feedbackStatus').textContent = '';
@@ -337,6 +397,20 @@
     } catch (error) { $('settingsMessage').textContent = debugEnabled ? `保存失败：${error.message}` : '保存失败，请稍后重试。'; }
     finally { $('saveDuet').disabled = false; }
   };
+  $('saveNickname').onclick = async () => {
+    $('saveNickname').disabled = true;
+    try {
+      const result = await api('/duet/nickname', {method:'POST',
+        headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'},
+        body:JSON.stringify({nickname:$('assistantNickname').value, revision:nicknameRevision})});
+      if (!result.ok) { $('nicknameStatus').textContent = result.reason || '昵称保存失败，请重试'; return; }
+      settingsRevision = result.revision;
+      nicknameRevision = result.revision; nicknameDirty = false;
+      $('assistantNickname').value = result.nickname;
+      $('nicknameStatus').textContent = '已保存，下次开启语音时使用这个昵称。';
+    } catch { $('nicknameStatus').textContent = '昵称保存失败，请重试'; }
+    finally { $('saveNickname').disabled = false; }
+  };
   async function loadNotices() {
     const target = $('announcements');
     try {
@@ -363,7 +437,7 @@
   }
   $('openTutorial').onclick = async () => {
     try {
-      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.1.10');
+      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.2.0');
       requestTutorial(localStorage);
       $('tutorialStatus').textContent = '请回到 DSH 页面继续教学。';
     } catch { $('tutorialStatus').textContent = '暂时无法打开教学，请允许浏览器存储后重试。'; }
@@ -372,11 +446,11 @@
   setInterval(() => { loadDuetConfig().catch(showConnectionUnavailable); }, 2000);
   void loadNotices();
   setInterval(loadNotices, 60000);
-  import('/duet/assets/client/shortcuts.mjs?v=0.1.10').then(({mountShortcutSettings}) => {
+  import('/duet/assets/client/shortcuts.mjs?v=0.2.0').then(({mountShortcutSettings}) => {
     const dispose = mountShortcutSettings({speaker:$('speakerShortcut'),mic:$('micShortcut'),clearSpeaker:$('clearSpeakerShortcut'),clearMic:$('clearMicShortcut'),status:$('shortcutStatus')});
     window.addEventListener('pagehide', e => {if(!e.persisted)dispose()}, {once:true});
   }).catch(() => { $('shortcutStatus').textContent = '暂时无法加载快捷键设置，请刷新重试。'; });
-  import('/duet/assets/client/microphone.mjs?v=0.1.10').then(({mountMicrophoneSettings}) => {
+  import('/duet/assets/client/microphone.mjs?v=0.2.0').then(({mountMicrophoneSettings}) => {
     const dispose = mountMicrophoneSettings({select:$('microphoneDevice'),refresh:$('refreshMicrophones'),status:$('microphoneStatus')});
     window.addEventListener('pagehide', dispose, {once:true});
   }).catch(() => { $('microphoneStatus').textContent = '暂时无法加载麦克风设置，请刷新重试。'; });

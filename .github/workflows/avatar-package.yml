@@ -1,0 +1,89 @@
+name: Build avatar plugin package
+
+# Build artifacts only; no npm publish, releases, deployment, or signing secrets.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  helper:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            key: win32-x64
+          - runner: macos-15
+            key: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep checkout line endings consistent for source tests
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: node scripts/prepare-avatar-assets.mjs
+      - run: npm run build:avatar
+      - run: npm test && npm run check
+      - run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+      - run: npm run build:avatar:desktop
+      - run: node scripts/verify-avatar-package.mjs --platforms '${{ matrix.key }}'
+      - name: Native startup, renderer readiness, and exit smoke test
+        run: node scripts/test-avatar-native.mjs
+      - name: Preserve bundle files and permissions in transit
+        run: tar -czf helper-${{ matrix.key }}.tgz -C desktop/bin '${{ matrix.key }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-${{ matrix.key }}
+          path: helper-${{ matrix.key }}.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    needs: helper
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: node scripts/prepare-avatar-assets.mjs
+      - run: npm run build:avatar
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: helper-*
+          path: artifacts/helpers
+          merge-multiple: true
+      - name: Assemble and verify both helpers
+        run: |
+          mkdir -p desktop/bin
+          for archive in artifacts/helpers/*.tgz; do tar -xzf "$archive" -C desktop/bin; done
+          node scripts/verify-avatar-package.mjs
+      - name: Pack plugin and check the actual archive
+        run: |
+          npm pack --pack-destination artifacts
+          mkdir -p artifacts/check
+          tar -xzf artifacts/dsh-duet-*.tgz -C artifacts/check
+          node scripts/verify-avatar-package.mjs --package-root artifacts/check/package
+          sha256sum artifacts/dsh-duet-*.tgz > artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-duet-multiplatform-candidate
+          path: |
+            artifacts/dsh-duet-*.tgz
+            artifacts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

@@ -23,6 +23,23 @@ import { sessionCreationPayload } from '../../src/client/workspaces.mjs'
 const message = extra => ({ type: 'harness.rpc.request', connection_id: 'a'.repeat(32),
   request_id: 'b'.repeat(32), method: 'GET', path: '/api/sessions', ...extra })
 
+test('nickname RPC is allowlisted, owner-bound and deduplicated without navigation', async () => {
+  let calls=0
+  const replies=[]
+  const rpc=new HarnessRPCExecutor(x=>replies.push(x),async (url,options)=>{
+    calls++
+    assert.equal(url,'/duplex-control/api/duet/nickname')
+    assert.equal(options.headers['X-Duet-Browser-Client'],'owner')
+    assert.deepEqual(JSON.parse(options.body),{nickname:'沐沐'})
+    return new Response(JSON.stringify({ok:true,nickname:'沐沐'}))
+  },undefined,null,undefined,{id:'owner'})
+  const req=message({method:'POST',path:'/api/duet/nickname',payload:{nickname:'沐沐'}})
+  await rpc.execute(req);await rpc.execute(req)
+  assert.equal(calls,1);assert.equal(replies.length,2)
+  assert.equal(rpcNavigationSession(req,replies[0].body),null)
+  rpc.close()
+})
+
 test('creation follows page workspace at command time, rejects missing selection, and ignores remote cwd', async () => {
   let current = 's2'
   const ctx = { sessions: { list: { getSnapshot: () => ({current}) } },

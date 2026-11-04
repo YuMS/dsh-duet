@@ -12,8 +12,8 @@ export function voiceSocketUrl(params, globals = globalThis, path = 'duplex-cont
 }
 
 /** Desktop refuses custom-protocol popups; keep settings in the owned window. */
-export function bindSettingsLink(link, globals = globalThis) {
-  if (globals.location.protocol !== 'dsh-app:') return () => {}
+export function bindSettingsLink(link, globals = globalThis, {embedded=false} = {}) {
+  if (!embedded && globals.location.protocol !== 'dsh-app:') return () => {}
   let dialog
   const close = () => { dialog?.close(); dialog?.remove(); dialog = null }
   const open = event => {

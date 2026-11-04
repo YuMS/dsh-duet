@@ -18,6 +18,13 @@ const modules = {
   workspaces: 'client/workspaces',
   transport: 'client/transport',
   identity: 'client/identity', identity_protocol: 'shared/identity',
+  avatar: 'client/avatar', avatar_protocol: 'shared/avatar',
+  avatar_activity: 'shared/avatar-activity',
+  avatar_ui: 'shared/avatar-ui',
+  avatar_menu: 'shared/avatar-menu', avatar_menu_ui: 'shared/avatar-menu-ui',
+  avatar_tasks: 'client/avatar-tasks',
+  avatar_surface: 'shared/avatar-surface', avatar_surfaces: 'client/avatar-surfaces',
+  input_effect: 'client/input-effect',
 }
 const aliases = {
   state: 'DuetState as VoiceState', audio: 'DuetAudio as VoiceAudio',
@@ -26,6 +33,11 @@ const aliases = {
 const publicModules = new Set(Object.values(modules))
 
 export function publicAsset(pathname) {
+  const avatar = { '/duet/avatar/renderer.mjs':['renderer.mjs','text/javascript; charset=utf-8'],
+    '/duet/avatar/character.glb':['character.glb','model/gltf-binary'],
+    '/duet/avatar/portrait.png':['portrait.png','image/png'] }[pathname]
+  if (avatar) return {url:new URL(`../../assets/avatar/${avatar[0]}`,import.meta.url),contentType:avatar[1],
+    cacheControl:avatar[0].endsWith('.mjs')?'no-store':'private, max-age=3600'}
   const modern = pathname.match(/^\/duet\/assets\/(client|shared)\/([a-z-]+)\.mjs$/)
   if (modern && publicModules.has(`${modern[1]}/${modern[2]}`)) {
     return { url: new URL(`../${modern[1]}/${modern[2]}.mjs`, import.meta.url) }

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "duet companion",
+  "version": "0.1.0",
+  "identifier": "com.dsh-duet.companion",
+  "build": {"frontendDist": "../bootstrap"},
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [],
+    "security": {"csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob: ws://127.0.0.1:* ipc: http://ipc.localhost; object-src 'none'"}
+  },
+  "bundle": {"active": false}
+}

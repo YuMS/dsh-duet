@@ -1,25 +1,29 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.1.10'
-import { DuetAudio, AUDIO_STOP_PROTOCOL } from './audio.mjs?v=0.1.10'
-import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.1.10'
-import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.1.10'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.1.10'
-import { mountTutorial } from './tutorial.mjs?v=0.1.10'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.1.10'
-import { mountRating } from './feedback.mjs?v=0.1.10'
-import { createAudioUploadConsent } from './consent.mjs?v=0.1.10'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.1.10'
-import { nativeInteractions } from './interactions.mjs?v=0.1.10'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.1.10'
-import { mountControlsLayout } from './controls-layout.mjs?v=0.1.10'
-import { mountNotice } from './notice.mjs?v=0.1.10'
-import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.1.10'
-import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.1.10'
-import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.1.10'
-import { sessionLabel } from '../shared/catalog.mjs?v=0.1.10'
-import { resultNotification } from '../shared/result-notification.mjs?v=0.1.10'
-import { HarnessSync } from './harness-sync.mjs?v=0.1.10'
-import { LocalSync } from './local-sync.mjs?v=0.1.10'
-import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.1.10'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.2.0'
+import { DuetAudio, AUDIO_STOP_PROTOCOL } from './audio.mjs?v=0.2.0'
+import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.2.0'
+import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.2.0'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.2.0'
+import { mountTutorial } from './tutorial.mjs?v=0.2.0'
+import { mountAvatarTasks } from './avatar-tasks.mjs'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.2.0'
+import { mountRating } from './feedback.mjs?v=0.2.0'
+import { createAudioUploadConsent } from './consent.mjs?v=0.2.0'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.2.0'
+import { nativeInteractions } from './interactions.mjs?v=0.2.0'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.2.0'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.2.0'
+import { mountNotice } from './notice.mjs?v=0.2.0'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.2.0'
+import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.2.0'
+import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.2.0'
+import { sessionLabel } from '../shared/catalog.mjs?v=0.2.0'
+import { resultNotification } from '../shared/result-notification.mjs?v=0.2.0'
+import { HarnessSync } from './harness-sync.mjs?v=0.2.0'
+import { LocalSync } from './local-sync.mjs?v=0.2.0'
+import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.2.0'
+import { mountAvatar } from './avatar.mjs'
+import { mountAvatarSurfaces } from './avatar-surfaces.mjs'
+import { audioUnlockPanel } from '../shared/avatar-ui.mjs'
 
 export function mountDuet(ctx) {
   const pageId = crypto.randomUUID()
@@ -30,10 +34,13 @@ export function mountDuet(ctx) {
   const notices = mountNotice(() => controls)
   const labels = new Map()
   const resultResume = {}
-  let localSync
+  let localSync,avatarTasks,closeMenuSettings
   let clientTraceId = null, diagnosticCount = 0
   let connectionGuidance = null, reportHintShown = null
-  let tutorial, teaching, ratingPanel, connectionHint, stopControlsLayout, stopSettings
+  let tutorial, teaching, ratingPanel, connectionHint, stopControlsLayout, stopSettings, avatar
+  const modeActions=new Map()
+  let unlockPanel
+  const surfaces = mountAvatarSurfaces({avatar:()=>avatar,canActivate:()=>audio.context?.state==='running'})
   const diagnostic = data => {
     if (++diagnosticCount > 100 && !diagnosticPayload(data)) return
     const bounded = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 4000) : v]))
@@ -115,8 +122,12 @@ export function mountDuet(ctx) {
       interactions: interactions.snapshot(),
     }), report, resultResume)
     const stopInteractions = interactions.subscribe(() => resultPush.changed())
-    const rpc = new HarnessRPCExecutor(send, fetch, report, async (request, signal) =>
-      (await interactions(request, signal)) ?? composer.execute(request, signal), rows =>
+    const rpc = new HarnessRPCExecutor(send, fetch, report, async (request, signal) => {
+      const result=(await interactions(request, signal)) ?? await composer.execute(request, signal)
+      if(request.method==='PUT' && /\/composer$/.test(request.path) && result?.composer && !signal.aborted)
+        avatar?.inputWritten(result.composer.text,result.composer.session_id)
+      return result
+    }, rows =>
         browserSessionCatalog(ctx, rows).map(row => ({ ...row, active: row.session_id === focusedSession(ctx) })), {
           id: connectionTraceId,
           focused: () => focusedSession(ctx),
@@ -150,6 +161,7 @@ export function mountDuet(ctx) {
         stopBridge?.(); stopBridge = null
         rpc.close()
         audio.stop()
+        avatar?.cancelInput()
         if (ws && ws.readyState !== WebSocket.CLOSED) {
           await new Promise(resolve => {
             const timer = setTimeout(resolve, 1200)
@@ -170,11 +182,12 @@ export function mountDuet(ctx) {
       if(!identity.ok)throw Error('voice_config_unavailable')
       requireWorkspace(ctx)
       if(closed)return
-      if (mode === 'online') stopBridge = startComposerBridge(ctx, connectionTraceId, fetch, localSync)
+      if (mode === 'online') stopBridge = startComposerBridge(ctx, connectionTraceId, fetch, localSync,
+        (text,id)=>avatar?.inputWritten(text,id))
       ws = new WebSocket(voiceSocketUrl({ mode, plugin_version: PLUGIN_VERSION, client_trace_id: connectionTraceId, page_id: pageId }), identityVoiceProtocols())
       ws.onopen = () => {
         report({ event: 'browser.connection_start', page_binding: 'connection_owner_v1' })
-        send({ type: 'session.update', client: {audio_stop_protocol:AUDIO_STOP_PROTOCOL} })
+        send({ type: 'session.update', client: {audio_stop_protocol:AUDIO_STOP_PROTOCOL, audio_text_protocol:'audio_text_delta_v1'} })
         if (mode === 'online') stopComposer = observeComposer(ctx, composer, send)
       }
       ws.onmessage = async event => {
@@ -237,7 +250,10 @@ export function mountDuet(ctx) {
               try { audio.connectedChime() } catch { /* A notification must not break voice. */ }
             }
           }
-          audio.event(message, send)
+          if (audio.event(message, send, visible => {
+            avatar?.event(visible); teaching?.observe(visible); receive(visible)
+          })) return
+          avatar?.event(message)
           teaching?.observe(message)
           receive(message)
         } catch (error) {
@@ -294,6 +310,12 @@ export function mountDuet(ctx) {
     dot.textContent = '.'; dot.dataset.duetMark = ''; dot.style.color = '#ed9b35'
     entry.append(dot)
     controls.append(entry)
+    const avatarButton=document.createElement('button')
+    avatarButton.type='button';avatarButton.dataset.duetAvatarToggle=''
+    avatarButton.style.cssText='position:relative;flex-shrink:0;border:0;border-radius:6px;background:transparent;cursor:pointer;padding:5px;display:flex'
+    avatarButton.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.6 18.2a6.7 6.7 0 0 1 12.8 0"/></svg>'
+    avatarButton.onclick=()=>avatar?.toggle()
+    controls.append(avatarButton)
     // Heroicons 24/outline (MIT); all controls share the same optical box/stroke.
     for (const [kind, path] of [['mic', '<path d="M7.5 3.75 3 8.25m0 0 4.5 4.5M3 8.25h18m-4.5 3L21 15.75m0 0-4.5 4.5M21 15.75H3"/>'], ['speaker', '<path d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z"/>']]) {
       const button = document.createElement('button')
@@ -307,7 +329,7 @@ export function mountDuet(ctx) {
       // perimeter. Outer radius 6 matches the original button, not a circle.
       ring.innerHTML = '<svg viewBox="0 0 30 30" preserveAspectRatio="none" aria-hidden="true"><rect x="1" y="1" width="28" height="28" rx="5" pathLength="100"/></svg>'
       button.append(ring)
-      button.onclick = () => {
+      const changeMode = origin => {
         if (tutorial?.active) { notice('请先结束教学，再切换模式。'); return }
         const requestedMode = kind === 'mic' ? 'online' : 'tts_only'
         const checkWorkspace = () => {
@@ -322,19 +344,21 @@ export function mountDuet(ctx) {
           if (!checkWorkspace()) return
           // Unlock playback inside user activation, before any network await.
           const enabling = kind === 'mic' ? state.mode !== 'online' : state.mode !== 'tts_only'
-          if (enabling) void audio.prepare().catch(() => state.fail('audio_permission_denied'))
+          if (enabling) { unlockPanel?.remove();unlockPanel=null;void audio.prepare().catch(() => state.fail('audio_permission_denied')) }
           const ticket = !enabling && state.ready ? state.connection?.feedbackTicket : null
           // Capture the ended connection, never consult the next session after await.
           void (async()=>{
             await (kind === 'mic' ? state.toggleMic() : state.toggleSpeaker())
-            if(ticket && !disposed){ratingPanel?.dispose();ratingPanel=mountRating(controls,ticket)}
+            if(ticket && !disposed){ratingPanel?.dispose();ratingPanel=mountRating(controls,ticket,{origin})}
           })()
         }
         audioConsent.cancel()
         const mode = kind === 'mic' ? 'online' : 'tts_only'
-        if (state.mode !== mode) audioConsent.request(activate)
+        if (state.mode !== mode) audioConsent.request(activate,undefined,{origin})
         else activate()
       }
+      button.onclick=()=>changeMode('page')
+      modeActions.set(kind==='mic'?'online':'tts_only',changeMode)
       controls.append(button)
     }
     const settings = document.createElement('a')
@@ -353,8 +377,23 @@ export function mountDuet(ctx) {
     connectionHint?.dispose()
     connectionHint = mountConnectionHint(controls,{onShown:hint=>reportHintShown?.(hint)})
     draw(state)
+    avatar?.syncToggle()
   }
   mount()
+  avatar = mountAvatar({controls:()=>controls, audio, state:()=>state, notice, onSurfaceAction:surfaces.action, onMenuAction:value=>avatarTasks?.action(value), focusedSession:()=>focusedSession(ctx), requestMode:mode=>{
+    if (!['online','tts_only'].includes(mode)) return
+    // Native IPC cannot grant browser user activation. First-use consent and
+    // audio permission remain in the owning DSH page, never bypassed by a pet.
+    if (state.mode !== mode && audio.context?.state !== 'running') {
+      unlockPanel?.remove()
+      unlockPanel=audioUnlockPanel({
+        onEnable:()=>{unlockPanel?.remove();unlockPanel=null;controls?.querySelector(`[data-voice=${mode==='online'?'mic':'speaker'}]`)?.click()},
+        onCancel:()=>{unlockPanel?.remove();unlockPanel=null},
+      })
+      document.body.append(unlockPanel);surfaces.sync();return
+    }
+    modeActions.get(mode)?.('avatar')
+  }})
   const stopShortcuts = bindDuetShortcuts(kind => controls?.querySelector(`[data-voice=${kind}]`)?.click())
   const observer = new MutationObserver(mount)
   observer.observe(document.body, { subtree: true, childList: true })
@@ -449,10 +488,18 @@ export function mountDuet(ctx) {
     if (!tutorial && controls) tutorial = mountTutorial({ controls, adapter: teaching })
   }
   mountTeaching()
+  avatarTasks=mountAvatarTasks({ctx,sync:localSync,avatar:()=>avatar,tutorial:()=>tutorial,settings:()=>{
+    closeMenuSettings?.()
+    const link=document.createElement('a');link.href='/duet/'
+    closeMenuSettings=bindSettingsLink(link,globalThis,{embedded:true});link.click()
+  }})
   const teachingObserver = new MutationObserver(mountTeaching)
   teachingObserver.observe(document.body, { subtree: true, childList: true })
   return () => {
     disposed = true
+    avatarTasks?.dispose();closeMenuSettings?.()
+    surfaces.dispose();unlockPanel?.remove()
+    avatar?.dispose()
     window.removeEventListener('pagehide', pageHide)
     pollController?.abort()
     unwatchSessions?.(); unwatchWorkspaces?.()

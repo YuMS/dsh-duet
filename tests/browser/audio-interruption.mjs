@@ -7,6 +7,8 @@ try {
   const page = await browser.newPage()
   await page.route('http://127.0.0.1:19361/**', async route => {
     const name = new URL(route.request().url()).pathname.slice(1)
+    if (name==='shared/avatar.mjs') return route.fulfill({contentType:'text/javascript',
+      body:await readFile(new URL('../../src/shared/avatar.mjs',import.meta.url),'utf8')})
     if (['audio.mjs','microphone.mjs'].includes(name)) return route.fulfill({contentType:'text/javascript',
       body:await readFile(new URL('../../src/client/'+name,import.meta.url),'utf8')})
     return route.fulfill({contentType:'text/html',body:'<!doctype html><title>Isolated PCM test</title>'})

@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { duetEnv } from './environment.mjs'
 import { publicServiceAuthorization, isPublicTrialEndpoint } from './service-defaults.mjs'
 import { migrateRetiredSettings } from './settings-migration.mjs'
+import { normalizeNickname } from '../shared/nickname.mjs'
 
 export function normalizeBackendURL(value) {
   if (typeof value !== 'string' || value.length > 2048) throw new Error('invalid_backend_url')
@@ -45,14 +46,16 @@ export class DuetSettings {
 
   validate(data) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('invalid_voice_settings')
+    if (data.backend_url === undefined && data.nickname != null) return {nickname:normalizeNickname(data.nickname)}
     const backend_url = validateBackendURL(data.backend_url, data.insecure_origin)
     const url = new URL(backend_url)
     const insecure_origin = url.protocol === 'ws:' && url.origin === data.insecure_origin ? url.origin : null
-    return { backend_url, ...(insecure_origin ? { insecure_origin } : {}) }
+    return { backend_url, ...(insecure_origin ? { insecure_origin } : {}),
+      ...(data.nickname != null ? {nickname:normalizeNickname(data.nickname)} : {}) }
   }
 
   effective() {
-    const endpoints = this.saved ? { online: this.saved.backend_url, tts_only: this.saved.backend_url } : this.base.endpoints
+    const endpoints = this.saved?.backend_url ? { online: this.saved.backend_url, tts_only: this.saved.backend_url } : this.base.endpoints
     return { ...this.base, endpoints, authorization: publicServiceAuthorization(endpoints) }
   }
 
@@ -67,9 +70,10 @@ export class DuetSettings {
     return {
       min_version: config.min_version, max_version_exclusive: config.max_version_exclusive,
       modes: Object.keys(config.endpoints), endpoints,
-      backend_url: endpoints.online, config_source: this.saved ? 'plugin_settings' : 'environment_or_default',
+      backend_url: endpoints.online, config_source: this.saved?.backend_url ? 'plugin_settings' : 'environment_or_default',
       auth_configured: Boolean(config.authorization),
       debug: this.debug, revision: this.revision,
+      nickname: this.saved?.nickname ?? null,
       insecure_transport: new URL(config.endpoints.online).protocol !== 'wss:',
     }
   }
@@ -81,7 +85,14 @@ export class DuetSettings {
     const normalized = normalizeBackendURL(input.backend_url)
     const insecureOrigin = input.allow_insecure_http === true ? new URL(normalized).origin : this.saved?.insecure_origin
     const url = validateBackendURL(normalized, insecureOrigin)
-    const next = this.validate({ backend_url: url, insecure_origin: insecureOrigin })
+    const next = this.validate({ backend_url: url, insecure_origin: insecureOrigin,
+      nickname: input.nickname === undefined ? this.saved?.nickname : input.nickname })
+    return this.persist(next, input.revision)
+  }
+
+  async persist(next, revision) {
+    if (this.writing) throw new Error('settings_write_in_progress')
+    if (revision !== this.revision) throw new Error('settings_revision_conflict')
     this.writing = true
     const temp = `${this.path}.${randomUUID()}.tmp`
     try {
@@ -92,6 +103,10 @@ export class DuetSettings {
       this.revision++
       return this.public()
     } finally { this.writing = false; await unlink(temp).catch(() => {}) }
+  }
+
+  async renameNickname(nickname, revision = this.revision) {
+    return this.persist({...this.saved, nickname:normalizeNickname(nickname)}, revision)
   }
 }
 

@@ -30,7 +30,7 @@ export function mountControlsLayout(controls) {
   actions.id = 'dsh-duet-actions'
   actions.setAttribute('role', 'group')
   actions.setAttribute('aria-label', 'duet 语音控制')
-  for (const node of [...controls.children]) if (node.matches('[data-voice],a')) actions.append(node)
+  for (const node of [...controls.children]) if (node.matches('[data-voice],[data-duet-avatar-toggle],a')) actions.append(node)
   controls.append(actions)
   let compact = false, opened = false, timer, disposed = false, pinned = false, suppressFocus = false
   const listeners = []
@@ -69,22 +69,33 @@ export function mountControlsLayout(controls) {
     }, 220)
   }
   const update = () => {
-    const next = geometry().width < 160 && typeof actions.showPopover === 'function'
-    if (controls.dataset.compact === String(next)) { position(); return }
+    const expandedWidth=controls.querySelector('[data-duet-avatar-toggle]')?220:160
+    // A content-sized slot shrinks with our launcher. Measure with its normal
+    // minimum footprint, otherwise d. itself prevents recovery on expansion.
+    // Restore both styles synchronously, before painting or moving focus.
+    const previousMin=controls.style.minWidth,previousHost=parent.getAttribute('data-duet-compact-host')
+    parent.removeAttribute('data-duet-compact-host');controls.style.minWidth=`${expandedWidth}px`
+    const available=geometry().width
+    controls.style.minWidth=previousMin
+    if(previousHost!==null)parent.setAttribute('data-duet-compact-host',previousHost)
+    const next = available < expandedWidth && typeof actions.showPopover === 'function'
+    const collapsed=next&&available<80
+    if (controls.dataset.compact === String(next)&&controls.dataset.collapsed===String(collapsed)) { position(); return }
     close(); compact = next
     controls.dataset.compact = String(compact)
-    if (compact) parent.setAttribute('data-duet-compact-host', 'true')
+    controls.dataset.collapsed = String(collapsed)
+    if (collapsed) parent.setAttribute('data-duet-compact-host', 'true')
     else if (hostCompact === null) parent.removeAttribute('data-duet-compact-host')
     else parent.setAttribute('data-duet-compact-host', hostCompact)
     controls.style.flexDirection = 'row'
-    controls.style.margin = compact ? '4px 0' : '4px 8px'
-    controls.style.padding = compact ? '2px 0' : '6px 8px'
-    controls.style.justifyContent = compact ? 'center' : ''
+    controls.style.margin = collapsed ? '4px 0' : '4px 8px'
+    controls.style.padding = collapsed ? '2px 0' : '6px 8px'
+    controls.style.justifyContent = collapsed ? 'center' : ''
     controls.style.minWidth = '0'
     entry.style.cssText = initial.entry
-    if (label) label.textContent = compact ? 'd' : labelText
+    if (label) label.textContent = collapsed ? 'd' : labelText
     if (compact) {
-      entry.style.cssText += ';display:flex;align-items:center;gap:2px;margin:0;padding:4px;box-sizing:border-box;min-width:32px;height:32px;font-size:23px;cursor:pointer'
+      entry.style.cssText += ';display:flex;align-items:center;gap:0;margin:0;padding:4px;box-sizing:border-box;min-width:32px;height:32px;font-size:23px;white-space:nowrap;flex-shrink:0;cursor:pointer'
       entry.setAttribute('role', 'button'); entry.tabIndex = 0
       entry.setAttribute('aria-label', 'duet 语音控制')
       entry.setAttribute('aria-expanded', 'false'); entry.setAttribute('aria-controls', actions.id)
@@ -133,6 +144,7 @@ export function mountControlsLayout(controls) {
     controls.style.cssText = initial.controls; entry.style.cssText = initial.entry
     controls.append(...actions.children); actions.remove(); style.remove()
     delete controls.dataset.compact
+    delete controls.dataset.collapsed
     if (hostCompact === null) parent.removeAttribute('data-duet-compact-host')
     else parent.setAttribute('data-duet-compact-host', hostCompact)
   }

@@ -4,7 +4,7 @@ const MAX_BYTES = 2_000_000
 // Only colons may be escaped in a session segment: never decode arbitrary paths.
 const SESSION = '(?:[A-Za-z0-9_:-]|%3[Aa]){1,256}'
 const READ = new RegExp(`^/api/(?:health|sessions|jobs|results|interactions|composer/focused|sessions/${SESSION}/(?:composer|execution))$`)
-const WRITE = new RegExp(`^/api/(?:sessions|sessions/${SESSION}/(?:composer/submit|activate|rename|fork|cancel)|interactions/(?:(?:question|approval)(?::|%3[Aa])(?:[A-Za-z0-9_:-]|%3[Aa]){1,1024}|[A-Za-z0-9_-]{1,256})/respond)$`)
+const WRITE = new RegExp(`^/api/(?:duet/nickname|sessions|sessions/${SESSION}/(?:composer/submit|activate|rename|fork|cancel)|interactions/(?:(?:question|approval)(?::|%3[Aa])(?:[A-Za-z0-9_:-]|%3[Aa]){1,1024}|[A-Za-z0-9_-]{1,256})/respond)$`)
 const sessionRoute = (path, suffix) => new RegExp(`^/api/sessions/${SESSION}/${suffix}$`).test(path)
 
 // Navigate only the connection-owning page after a successful mutation.
@@ -121,6 +121,7 @@ export class HarnessRPCExecutor {
         this.stopSupported = body.duet_rpc_capabilities?.includes('stop_task_v1') === true
           && typeof this.binding.focused === 'function'
         body.duet_rpc_capabilities = ['create_session_v1',
+          ...(body.duet_rpc_capabilities?.includes('rename_duet_v1') ? ['rename_duet_v1'] : []),
           ...(this.stopSupported ? ['stop_task_v1'] : []),
           ...(this.binding.syncSupported?.() === false ? [] : ['harness_sync_v1'])]
         // Both startup prompt and nth_N resolution read this same browser-local

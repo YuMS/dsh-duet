@@ -6,10 +6,13 @@ import {join} from 'node:path'
 import {chromium} from 'playwright'
 import {RemoteFeedback} from '../../src/host/feedback-files.mjs'
 import {FeedbackService} from '../../src/host/feedback-store.mjs'
+import {DuetSettings,settingsWriteAllowed} from '../../src/host/settings.mjs'
 const dir=await mkdtemp(join(tmpdir(),'duet-browser-identity-'))
 const store=new RemoteFeedback(()=>({}),{keyPath:join(dir,'key')})
 const rows=[];store.insert=async row=>{rows.push(row);return {archive_id:'fixture'}}
 const feedback=new FeedbackService(store)
+const base={endpoints:{online:'wss://fixture.invalid/ws',tts_only:'wss://fixture.invalid/ws'}}
+const settings=new DuetSettings(base,{path:join(dir,'voice.json')})
 let issued=0,configCalls=0,failed=false
 const errors=[]
 const browser=await chromium.launch({headless:true})
@@ -32,7 +35,16 @@ try{
       if(failed)return route.fulfill({status:503,json:{}})
       const token=store.ensureCredential({headers:req.headers()},{setHeader(){issued++}})
       // Simulate the Desktop response bridge: discard Set-Cookie.
-      return route.fulfill({json:{feedback_enabled:true,feedback_identity:token}})
+      return route.fulfill({json:{...settings.public(),feedback_enabled:true,feedback_identity:token}})
+    }
+    if(path==='/duplex-control/api/duet/nickname'){
+      // Desktop strips Origin/cookies: use the same signed-identity boundary as Host.
+      const headers={...req.headers()};delete headers.origin;delete headers.cookie
+      let verified=false
+      try{verified=headers['x-duet-identity-transport']==='local-v1'&&Boolean(feedback.user({headers}))}catch{}
+      if(!settingsWriteAllowed({headers},{verifiedLocalIdentity:verified}))return route.fulfill({status:403,json:{detail:'same-origin nickname request required'}})
+      const input=req.postDataJSON(),saved=await settings.renameNickname(input.nickname,input.revision)
+      return route.fulfill({json:{ok:true,nickname:saved.nickname,revision:saved.revision}})
     }
     if(path==='/duplex-control/api/feedback'){
       const result=await feedback.submit({headers:req.headers()},req.postDataJSON())
@@ -45,6 +57,7 @@ try{
       import {mountRating} from '/client/feedback.mjs';
       window.load=()=>identityFetch('/duplex-control/api/voice/config');
       window.protocols=identityVoiceProtocols;
+      window.rename=async nickname=>(await identityFetch('/duplex-control/api/duet/nickname',{method:'POST',headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'},body:JSON.stringify({nickname,revision:0})})).json();
       window.show=ticket=>mountRating(document.querySelector('#anchor'),ticket);
       await load();window.ready=true;
       </script>`})
@@ -59,6 +72,10 @@ try{
   assert.equal(protocols[0],'duet-voice-v1')
   assert.deepEqual(await other.evaluate(()=>protocols()),protocols)
   assert.deepEqual(await page.frames()[1].evaluate(()=>protocols()),protocols)
+  const renamed=await page.frames()[1].evaluate(()=>rename('小多'))
+  assert.equal(renamed.ok,true,'Desktop iframe nickname POST must carry the signed identity')
+  assert.equal(renamed.nickname,'小多')
+  assert.equal(new DuetSettings(base,{path:settings.path}).public().nickname,'小多','nickname survives Host settings reload')
   const token=protocols[1].slice('duet-identity.'.length)
   const ticket=feedback.open({headers:{'sec-websocket-protocol':protocols.join(',')}},'fixture-session','online')
   assert.ok(ticket);feedback.close(ticket)

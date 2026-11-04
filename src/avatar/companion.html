@@ -1,0 +1,33 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>duet</title><style>
+html,body{margin:0;background:transparent;font:13px/1.6 system-ui;overflow:hidden;color:#e9f4ff;user-select:none}
+#stage{--scale:1;position:absolute;left:0;top:0;width:280px;height:calc(210px + 280px * var(--scale));transform-origin:top left}
+#avatar{position:absolute;left:calc((280px - 260px * var(--scale)) / 2);top:140px;height:calc(280px * var(--scale));width:calc(260px * var(--scale));cursor:grab;touch-action:none}
+#bubble{position:absolute;bottom:calc(100% - 134px);left:12px;right:12px;padding:12px 14px;background:#142638ed;border:1px solid #8dc5ed45;border-radius:17px;box-shadow:0 5px 20px #0002;max-height:180px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;scrollbar-width:thin}
+#bubble{box-sizing:border-box}#bubble[hidden]{display:none}#bubble[data-input=true]{background:#193b53f5;border-color:#7cb8e599}
+#keyboard{display:inline-block;vertical-align:middle;margin-right:7px}#keyboard[hidden]{display:none}
+#tools{position:absolute;top:calc(142px + 280px * var(--scale));left:16px;right:16px;display:flex;align-items:center;justify-content:center;gap:6px;padding:5px;border:1px solid transparent;border-radius:15px;background:transparent;isolation:isolate}
+#tools{opacity:0;pointer-events:none;transition:opacity .5s ease}
+#stage{pointer-events:none}#bubble{pointer-events:auto}
+#tools[data-revealed=true]{opacity:1}
+#tools[data-interactive=true]{pointer-events:auto}
+#tools::before{content:'';position:absolute;inset:-1px;z-index:-1;pointer-events:none;border:1px solid #8dc5ed30;border-radius:inherit;background:#142638e8}
+#brand{font-family:Inter,"PingFang SC",sans-serif;font-size:21px;font-weight:700;letter-spacing:-1.1px;line-height:1.1;padding:0 4px;text-shadow:0 1px 2px #000b}#dot{color:#ed9b35}
+#tools button:not([aria-pressed=true]) svg{filter:drop-shadow(0 1px 1px #0009)}
+button{position:relative;display:flex;align-items:center;justify-content:center;width:31px;height:30px;flex-shrink:0;border:0;border-radius:8px;background:transparent;color:#d5e6f4;cursor:pointer;padding:5px}
+button:disabled{opacity:.4;cursor:wait}button:focus-visible{outline:2px solid #8dccff;outline-offset:2px}button[aria-pressed=true]:not([aria-busy=true]){background:#dcefff;color:#185a89}
+#tools:not([data-keyboard=true]) button:focus{outline:none}
+button svg{width:20px;height:20px}[data-connecting-ring]{position:absolute;inset:0;pointer-events:none}[data-connecting-ring][hidden]{display:none}[data-connecting-ring] svg{width:100%;height:100%;overflow:visible}[data-connecting-ring] rect{fill:none;stroke:#ed9b35;stroke-width:2;stroke-linecap:round;stroke-dasharray:28 72;animation:connect 1.6s linear infinite}@keyframes connect{to{stroke-dashoffset:-100}}
+#status{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+#shell{position:absolute;left:0;top:0;transform-origin:top left}#shell[data-panel=true] #stage{left:50px;top:280px}
+#surface{position:absolute;left:12px;top:12px;width:356px;max-height:256px;overflow:auto;box-sizing:border-box;background:#142638f5;color:#e9f4ff;border:1px solid #8dc5ed65;border-radius:18px;padding:18px;box-shadow:0 8px 26px #0003;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+#surface[hidden]{display:none}#surface h3{font-size:17px;margin:0 0 10px}#surface button{display:inline-block;width:auto;height:auto;min-height:32px;margin:8px 5px 0 0;padding:6px 10px;border:1px solid #8dc5ed70;background:#254866}#surface input{accent-color:#80c2ff}#surface .gesture-note{color:#ffd39a;margin:0 0 10px}
+[data-teaching]{outline:2px solid #80c2ff!important;box-shadow:0 0 0 5px #80c2ff40}[data-teaching]::after{content:'↓';position:absolute;top:-30px;left:8px;color:#80c2ff;font-size:24px}
+</style><div id="shell"><section id="surface" hidden role="region" aria-label="duet 提示和教学"></section><div id="stage" data-size="large">
+<div id="bubble" hidden><svg id="keyboard" hidden width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 9h1m3 0h1m3 0h1m3 0h1M6 12h1m3 0h1m3 0h1m3 0h1M7 15h10"/></svg><span id="text"></span></div>
+<div id="avatar" aria-label="duet 3D 形象"></div>
+<div id="tools"><span id="brand">duet<span id="dot">.</span></span><button id="size" type="button" aria-label="形象大小"></button>
+<button data-mode="online" aria-label="打开交互模式" title="交互模式" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3.75 3 8.25m0 0 4.5 4.5M3 8.25h18m-4.5 3L21 15.75m0 0-4.5 4.5M21 15.75H3"/></svg></button>
+<button data-mode="tts_only" aria-label="打开播报模式" title="播报模式" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h4l5-4v16l-5-4H4zM17 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg></button>
+<button id="close" aria-label="隐藏拟人角色" title="隐藏拟人角色"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+<div id="status" role="status">正在连接 DSH</div></div></div><script type="module" src="./companion.mjs"></script></html>

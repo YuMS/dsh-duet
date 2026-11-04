@@ -1,4 +1,5 @@
-import { microphoneConstraints } from './microphone.mjs?v=0.1.10'
+import { microphoneConstraints } from './microphone.mjs?v=0.2.0'
+import { captionCue, captionAt, AudioCaptionTimeline } from '../shared/avatar.mjs'
 
 export const AUDIO_STOP_PROTOCOL = 'audio_stop_candidates_v1'
 
@@ -15,6 +16,7 @@ export class DuetAudio {
     this.nextTime = 0
     this.tones = new Set()
     this.captureCleanup = null
+    this.captionTimeline = new AudioCaptionTimeline()
   }
 
   prepare() {
@@ -99,8 +101,19 @@ export class DuetAudio {
     report({event:'browser.capture_started'})
   }
 
-  event(event, send) {
+  event(event, send, present = () => {}) {
     const key = `${event.response_id}:${event.generation}`
+    if (['response.output_text.delta','response.output_text.done'].includes(event.type)
+        && Object.hasOwn(event,'audio_sample_end')) {
+      if (this.cleared.has(key)) return true
+      this.captionTimeline.ingestDelta(key,event,present)
+      const response=this.responses.get(key)
+      if(response && this.context)this.captionTimeline.text(key,this.playedAt(response,this.context.currentTime))
+      if (this.avatarCaption?.key === key) {
+        this.avatarCaption.text = this.captionTimeline.text(key,this.avatarCaption.played) ?? this.avatarCaption.text
+      }
+      return true
+    }
     if (event.type === 'output_audio_buffer.clear') { this.interrupt(event, send); return }
     if (event.type === 'response.output_audio.done') {
       const response = this.responses.get(key)
@@ -119,16 +132,22 @@ export class DuetAudio {
     node.buffer = buffer
     const gain = this.context.createGain()
     node.connect(gain)
-    gain.connect(this.context.destination)
+    gain.connect(this.avatarOutput())
     const start = Math.max(this.context.currentTime + 0.04, this.nextTime)
     this.nextTime = start + pcm.length / rate
     const response = this.responses.get(key) || { response_id: event.response_id, generation: event.generation, played: 0, basePlayed: 0, received: 0, chunks: [] }
     const chunk = { start, samples: pcm.length, rate, sampleStart: response.received, node, gain, ended: false }
+    chunk.caption = captionCue(response, event)
     response.received += pcm.length
     response.chunks.push(chunk)
     this.responses.set(key, response)
     this.nodes.add(node)
     node.onended = () => {
+      const until = Math.min(this.context.currentTime, response.stopAt ?? Infinity)
+      if (until > chunk.start) {
+        const played=this.playedAt(response,until)
+        this.avatarCaption = { text: this.captionTimeline.text(key,played) ?? captionAt(chunk.caption, (until-chunk.start)*rate/pcm.length), at: performance.now(), key, played }
+      }
       chunk.ended = true
       this.nodes.delete(node); node.disconnect(); gain.disconnect()
       this.progress(send)
@@ -147,6 +166,7 @@ export class DuetAudio {
     if (!this.context) return
     for (const [key, r] of this.responses) {
       const played = this.playedAt(r, this.context.currentTime)
+      this.captionTimeline.text(key,played)
       if (played > r.played) {
         r.played = played
         send({ type: 'output_audio_buffer.playback_progress', response_id: r.response_id, generation: r.generation, played_samples: played })
@@ -159,6 +179,47 @@ export class DuetAudio {
   }
 
   playing() { return this.nodes.size > 0 }
+
+  avatarOutput() {
+    if (!this.context?.createAnalyser) return this.context.destination
+    if (!this.avatarAnalyser) {
+      this.avatarAnalyser = this.context.createAnalyser()
+      this.avatarAnalyser.fftSize = 1024
+      this.avatarAnalyser.smoothingTimeConstant = .6
+      this.avatarAnalyser.connect(this.context.destination)
+      this.avatarWave = new Float32Array(1024)
+      this.avatarFrequency = new Uint8Array(512)
+    }
+    return this.avatarAnalyser
+  }
+
+  /** Meter actual post-gain playback, not network arrival or microphone input. */
+  avatarSample() {
+    const silent = {rms:0,viseme:'A',utterance:'',text:performance.now()-(this.avatarCaption?.at ?? -Infinity)<2000?this.avatarCaption.text:''}
+    if (!this.context || this.context.state !== 'running' || !this.avatarAnalyser) return silent
+    const now = this.context.currentTime
+    let utterance = '', response_id = '', text = ''
+    for (const [key,r] of this.responses) {
+      if (now >= (r.stopAt ?? Infinity)) continue
+      const chunk=r.chunks.find(c => !c.ended && now >= c.start && now < c.start + c.samples/c.rate)
+      if (chunk) {
+        utterance=key;response_id=r.response_id
+        const played=this.playedAt(r,now)
+        text=this.captionTimeline.text(key,played) ?? captionAt(chunk.caption,(now-chunk.start)*chunk.rate/chunk.samples)
+        this.avatarCaption={text,at:performance.now(),key,played}
+        break
+      }
+    }
+    if (!utterance) return silent
+    this.avatarAnalyser.getFloatTimeDomainData(this.avatarWave)
+    this.avatarAnalyser.getByteFrequencyData(this.avatarFrequency)
+    let square=0;for(const v of this.avatarWave)square+=v*v
+    const rms=Math.min(1,Math.sqrt(square/this.avatarWave.length))
+    const band=(lo,hi)=>{let sum=0,n=0;const hz=this.context.sampleRate/1024;for(let i=Math.ceil(lo/hz);i<Math.min(512,hi/hz);i++){sum+=this.avatarFrequency[i];n++}return sum/Math.max(1,n)}
+    const low=band(160,600),mid=band(650,1250),high=band(1500,3200)
+    const viseme=high>mid*1.16?'I':mid>low*1.13?'E':low>mid*1.3?(high>mid*.85?'O':'U'):'A'
+    return {rms,viseme,utterance,response_id,text}
+  }
 
   interrupt(event, send) {
     const key = `${event.response_id}:${event.generation}`
@@ -206,6 +267,8 @@ export class DuetAudio {
     if (!r.stopping || r.acknowledged || r.chunks.some(c => !c.ended)) return
     r.acknowledged = true
     const played = this.playedAt(r, this.context.currentTime)
+    this.captionTimeline.text(key,played)
+    this.captionTimeline.discardPending(key)
     send({type:'output_audio_buffer.cleared', response_id:r.response_id, generation:r.generation,
       played_samples:played, audio_stop_protocol:AUDIO_STOP_PROTOCOL,
       selected_stop_sample:r.selectedStop, stop_reason:r.stopReason})
@@ -223,6 +286,8 @@ export class DuetAudio {
     this.nodes.clear()
     this.responses.clear()
     this.nextTime = 0
+    this.avatarCaption = null
+    this.captionTimeline.clear()
   }
 
   stop() {

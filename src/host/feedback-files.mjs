@@ -20,7 +20,11 @@ export class RemoteFeedback {
       const fd=openSync(tmp,'wx',0o600)
       try{writeFileSync(fd,randomBytes(32));fsyncSync(fd)}finally{closeSync(fd)}
       try{linkSync(tmp,this.keyPath)}catch(e){if(e.code!=='EEXIST')throw e}finally{unlinkSync(tmp)}
-      const d=openSync(dirname(this.keyPath),'r');try{fsyncSync(d)}finally{closeSync(d)}
+      // Windows cannot flush this read-only directory handle (EPERM). The key
+      // file itself was already flushed above; keep directory durability on POSIX.
+      if(process.platform!=='win32'){
+        const d=openSync(dirname(this.keyPath),'r');try{fsyncSync(d)}finally{closeSync(d)}
+      }
     }
     const key=readFileSync(this.keyPath);if(key.length!==32)throw Error('feedback_identity_key_invalid')
     this.key=key;return key

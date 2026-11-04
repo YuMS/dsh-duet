@@ -10,11 +10,12 @@ import {sessionMetadata} from './session-metadata.mjs'
 import {VOICE_PROTOCOL} from '../shared/identity.mjs'
 import { broadcastText } from '../shared/result-notification.mjs'
 import { sessionLabel } from '../shared/catalog.mjs'
+import { normalizeNickname } from '../shared/nickname.mjs'
 import { DEFAULT_DUET_URL, publicServiceAuthorization } from './service-defaults.mjs'
 export { DEFAULT_DUET_URL } from './service-defaults.mjs'
 const require = createRequire(import.meta.url)
 
-export function compatibleVersion(version, min = '0.1.0', maxExclusive = '0.2.0') {
+export function compatibleVersion(version, min = '0.1.0', maxExclusive = '0.3.0') {
   const parse = v => /^\d+\.\d+\.\d+$/.test(v || '') ? v.split('.').map(Number) : null
   const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
   const v = parse(version), low = parse(min), high = parse(maxExclusive)
@@ -28,7 +29,7 @@ export function duetConfig(env = process.env) {
   }
   return {
     min_version: duetEnv('MIN_VERSION', env) || '0.1.0',
-    max_version_exclusive: duetEnv('MAX_VERSION_EXCLUSIVE', env) || '0.2.0',
+    max_version_exclusive: duetEnv('MAX_VERSION_EXCLUSIVE', env) || '0.3.0',
     control_transport: duetEnv('CONTROL_TRANSPORT', env) || 'client_rpc_v1',
     authorization: publicServiceAuthorization(endpoints),
     endpoints,
@@ -173,12 +174,17 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
             if (message.type === 'session.update') {
               if (initialized) throw new Error('voice_mode_requires_reconnect')
               initialized = true
+              let nickname = null
+              try { nickname = normalizeNickname(config.nickname?.()) } catch { /* Default identity. */ }
               forward(JSON.stringify({ type: 'session.update',
                 client: {...clientMetadata, diagnostics_protocol:DIAGNOSTICS_PROTOCOL,
+                  ...(message.client?.audio_text_protocol === 'audio_text_delta_v1'
+                    ? {audio_text_protocol:'audio_text_delta_v1'} : {}),
                   ...(message.client?.audio_stop_protocol === 'audio_stop_candidates_v1'
                     ? {audio_stop_protocol:'audio_stop_candidates_v1'} : {})},
                 session: {
                 type: 'realtime', preset_id: 'server_default',
+                duet_nickname: nickname,
                 io_mode:mode === 'tts_only'?'external_only':'online',
                 ...(clientRPC ? { harness: { transport: 'client_rpc_v1' } } : {}),
                 audio: { input: { format: { type: 'audio/pcm', rate: 16000 } } },

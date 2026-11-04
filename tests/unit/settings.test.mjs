@@ -7,6 +7,39 @@ import { DuetSettings, validateBackendURL, settingsWriteAllowed } from '../../sr
 import { ServiceNotices } from '../../src/host/notices.mjs'
 import { duetConfig } from '../../src/host/proxy.mjs'
 import { migrateRetiredSettings } from '../../src/host/settings-migration.mjs'
+import { normalizeNickname, NICKNAME_LIMIT } from '../../src/shared/nickname.mjs'
+
+test('nickname supports mixed scripts and survives URL edits and restart', async t => {
+  for (const name of ['沐沐','每天看星星','Star Friend',"Anne-Marie", "O'Neil",'小Star','Star沐','小 A','𠮷Abc','小-A']) assert.equal(normalizeNickname(name),name)
+  for (const name of ['每天陪我看星星','One Two Three','小 Star','小Stars','Star沐沐','小 A B C','小1','小🙂','<action>','', 'x\ny']) assert.throws(()=>normalizeNickname(name),new RegExp(NICKNAME_LIMIT))
+  assert.equal(normalizeNickname('  小Star  '),'小Star')
+  const s = await fixture(t)
+  assert.equal(s.public().nickname,null)
+  await s.renameNickname('沐沐')
+  await assert.rejects(s.renameNickname('每天陪我看星星'),new RegExp(NICKNAME_LIMIT))
+  assert.equal(s.public().nickname,'沐沐')
+  await s.save({backend_url:'https://custom.example/',revision:s.revision})
+  assert.equal(new DuetSettings(s.base,{path:s.path}).public().nickname,'沐沐')
+  await assert.rejects(s.renameNickname('小禾',0),/settings_revision_conflict/)
+  // A failed atomic write must never acknowledge or expose the new name.
+  const original=s.path
+  s.path=join(original,'voice.json')
+  await assert.rejects(s.renameNickname('小禾'))
+  assert.equal(s.public().nickname,'沐沐')
+  assert.equal(new DuetSettings(s.base,{path:original}).public().nickname,'沐沐')
+  s.path=original
+  await s.renameNickname('小Star')
+  assert.equal(new DuetSettings(s.base,{path:original}).public().nickname,'小Star')
+})
+
+test('renaming alone preserves distinct configured mode endpoints', async t => {
+  const base={...duetConfig({}),endpoints:{online:'wss://online.example/ws',tts_only:'wss://tts.example/ws'}}
+  const s=await fixture(t,base)
+  await s.renameNickname('沐沐')
+  assert.deepEqual(s.effective().endpoints,base.endpoints)
+  assert.deepEqual(new DuetSettings(base,{path:s.path}).effective().endpoints,base.endpoints)
+  assert.deepEqual(JSON.parse(await readFile(s.path,'utf8')),{nickname:'沐沐'})
+})
 import { DEFAULT_DUET_URL, PUBLIC_TRIAL_AUTHORIZATION, publicServiceAuthorization } from '../../src/host/service-defaults.mjs'
 
 test('HTTPS default retains public trial authentication after saving and reloading', async t => {

@@ -4,7 +4,8 @@ import { chromium } from 'playwright'
 
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
 try {
-  const page = await browser.newPage({ viewport: { width: 700, height: 500 } })
+ for(const deviceScaleFactor of [1,1.25,1.5,2]){
+  const page = await browser.newPage({ viewport: { width: 700, height: 500 },deviceScaleFactor })
   const errors = []; page.on('pageerror', e => errors.push(e.message))
   await page.route('http://layout.test/**', async route => {
     if (route.request().url().endsWith('.mjs')) return route.fulfill({ contentType: 'text/javascript', body:
@@ -78,6 +79,61 @@ try {
   }
   await page.evaluate(()=>stop())
   assert.equal(await page.locator('#slot').getAttribute('data-duet-compact-host'),null)
+  await page.evaluate(async()=>{
+    const controls=document.querySelector('#controls'),button=document.createElement('button');button.dataset.duetAvatarToggle='';button.textContent='头像';controls.insertBefore(button,controls.querySelector('[data-voice=mic]'));
+    window.stop=(await import('/layout.mjs')).mountControlsLayout(controls);
+    document.querySelector('#sidebar').style.width='56px';
+  })
+  await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='true')
+  await entry.hover();await actions.waitFor({state:'visible'})
+  assert.equal(await actions.locator('button').first().getAttribute('data-duet-avatar-toggle'),'')
+  assert.equal(await actions.locator('[data-duet-avatar-toggle]').isVisible(),true)
+  await page.evaluate(()=>stop())
+  // A Windows-style intrinsic flex slot used to get stuck at the width of d.
+  // Exercise the actual production label and four icon buttons, not text mocks.
+  await page.evaluate(async()=>{
+    const sidebar=document.querySelector('#sidebar'),slot=document.querySelector('#slot'),controls=document.querySelector('#controls')
+    sidebar.style.width='300px';sidebar.style.padding='0 12px'
+    slot.style.cssText='display:flex;width:max-content;max-width:100%;align-self:flex-start;align-items:center'
+    controls.style.cssText='display:flex;gap:4px;position:relative;padding:6px 8px;align-items:center;margin:4px 8px;max-width:100%'
+    const entry=document.querySelector('#dsh-duet-entry')
+    entry.style.cssText='font-family:Segoe UI,Arial,sans-serif;font-size:28px;font-weight:700;letter-spacing:-1.1px;line-height:1.1;margin-right:auto;padding:4px'
+    for(const button of controls.querySelectorAll('button,a')){
+      button.style.cssText='display:flex;flex-shrink:0;padding:5px;border:0;box-sizing:border-box'
+      button.innerHTML='<svg width="20" height="20" viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" fill="currentColor"/></svg>'
+    }
+    window.stop=(await import('/layout.mjs')).mountControlsLayout(controls)
+  })
+  for(let i=0;i<3;i++){
+    await page.evaluate(()=>document.querySelector('#sidebar').style.width='56px')
+    await page.waitForFunction(()=>document.querySelector('#dsh-duet-entry').textContent==='d.')
+    await page.evaluate(()=>document.querySelector('#sidebar').style.width='300px')
+    await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='false',{},{timeout:3000})
+    assert.equal(await entry.innerText(),'duet.')
+    await page.evaluate(()=>document.querySelector('#sidebar').style.width='210px')
+    await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='true')
+    assert.equal(await entry.textContent(),'duet.','expanded medium sidebar must retain full brand even with flyout controls')
+    const brandLine=await entry.evaluate(e=>{const range=document.createRange();range.selectNodeContents(e.firstChild);const text=range.getBoundingClientRect(),dot=e.querySelector('[data-duet-mark]').getBoundingClientRect();return {textTop:text.top,textBottom:text.bottom,dotTop:dot.top,dotBottom:dot.bottom,textRight:text.right,dotLeft:dot.left}})
+    assert.ok(brandLine.dotTop<brandLine.textBottom&&brandLine.textTop<brandLine.dotBottom&&brandLine.dotLeft>=brandLine.textRight-1,'brand must remain on one line')
+    await entry.click();await actions.waitFor({state:'visible'})
+    const footer=await page.locator('#hostSettings').boundingBox(),brand=await entry.boundingBox()
+    assert.ok(footer.x>=brand.x+brand.width||footer.y>=brand.y+brand.height,'host settings overlap brand')
+    await page.mouse.click(500,100)
+  }
+  await page.evaluate(()=>document.querySelector('#sidebar').style.width='300px')
+  await page.waitForFunction(()=>document.querySelector('#controls').dataset.compact==='false')
+  const visibleRects=await page.locator('#dsh-duet-entry,#dsh-duet-actions button,#dsh-duet-actions a,#hostSettings').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom}}))
+  const sidebarRight=(await page.locator('#sidebar').boundingBox()).width-12
+  for(const r of visibleRects)assert.ok(r.right<=sidebarRight+1,'wide sidebar clips controls: '+JSON.stringify(visibleRects))
+  for(let i=0;i<visibleRects.length;i++)for(let j=i+1;j<visibleRects.length;j++){
+    const a=visibleRects[i],b=visibleRects[j]
+    assert.ok(a.right<=b.x+1||b.right<=a.x+1||a.bottom<=b.y+1||b.bottom<=a.y+1,'wide sidebar controls overlap')
+  }
+  await page.screenshot({path:new URL(`../../../evidence/sidebar-wide-${deviceScaleFactor}.png`,import.meta.url).pathname})
+  await page.evaluate(()=>stop())
+  assert.equal(await page.locator('#slot').getAttribute('data-duet-compact-host'),null)
   assert.deepEqual(errors,[])
-  console.log('Compact controls: host settings preserved, unclipped flyout, keyboard, teaching, resize and cleanup passed')
+  console.log(`Controls at scale ${deviceScaleFactor}: host settings preserved, narrow rail, full medium brand, intrinsic-slot recovery, no clipping/overlap, keyboard and cleanup passed`)
+  await page.close()
+ }
 } finally { await browser.close() }

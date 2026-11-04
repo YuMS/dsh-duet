@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "avatar-pointer",
+  "description": "Receive local native pointer events for transparent character hover.",
+  "windows": ["avatar"],
+  "remote": {"urls": ["duet-avatar://localhost/*", "http://duet-avatar.localhost/*"]},
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

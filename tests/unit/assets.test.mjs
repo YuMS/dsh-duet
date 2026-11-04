@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { publicAsset } from '../../src/host/assets.mjs'
 
 test('public client and shared modules exist and expose no host files', async () => {
-  for (const path of ['client/browser', 'client/tutorial-adapter', 'shared/state', 'shared/catalog']) {
+  for (const path of ['client/browser', 'client/input-effect', 'client/tutorial-adapter', 'shared/state', 'shared/catalog']) {
     const asset = publicAsset(`/duet/assets/${path}.mjs`)
     assert.ok((await readFile(asset.url, 'utf8')).length)
   }

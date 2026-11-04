@@ -160,6 +160,10 @@ test('server compatibility is a configured semver range, missing and future vers
   for (const v of ['', '0.7.1', '0.8.0', '0.10.0', '1.0.0', '0.9.0junk']) assert.equal(compatibleVersion(v), false)
   assert.equal(compatibleVersion('0.1.0'), true)
   assert.equal(compatibleVersion('0.1.10'), true)
+  assert.equal(compatibleVersion('0.2.0'), true)
+  assert.equal(compatibleVersion('0.2.99'), true)
+  assert.equal(compatibleVersion('0.3.0'), false)
+  assert.equal(compatibleVersion('0.2.0', '0.1.0', '0.2.0'), false)
   assert.equal(compatibleVersion('0.8.3', '0.8.2', '0.9.0'), true)
   const state = { composer_state: { text: '未发送草稿' } }
   const out = externalWithState({ type: 'external_message', message_id: 'a', text: '任务完成' }, state)

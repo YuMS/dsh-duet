@@ -2,6 +2,7 @@
 export function mountNotice(anchor) {
   const panel = document.createElement('div')
   panel.dataset.duetNotice = ''
+  panel.dataset.duetAvatarSurface = '70'
   panel.setAttribute('role', 'status')
   panel.setAttribute('aria-live', 'polite')
   panel.hidden = true

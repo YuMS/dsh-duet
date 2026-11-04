@@ -14,7 +14,8 @@ export function migrateRetiredSettings(data, path) {
   if (!retired.includes(url.hostname) || !['ws:', 'wss:', 'http:', 'https:'].includes(url.protocol)
     || url.port || url.username || url.password || url.hash || !['/', '/ws'].includes(url.pathname)
     || [...url.searchParams].some(([k,v]) => k !== 'protocol' || v !== 'realtime_v2')) return data
-  const next = { backend_url: DEFAULT_DUET_URL }
+  const next = { backend_url: DEFAULT_DUET_URL,
+    ...(data.nickname != null ? {nickname:data.nickname} : {}) }
   const temp = `${path}.${randomUUID()}.tmp`
   try {
     writeFileSync(temp, JSON.stringify(next) + '\n', { mode: 0o600, flag: 'wx' })

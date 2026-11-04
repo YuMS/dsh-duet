@@ -21,6 +21,8 @@ try {
     await page.route('http://localhost:19200/**', async route => {
       const req = route.request(), path = new URL(req.url()).pathname
       calls.push([req.method(), path])
+      if(path==='/duet/assets/shared/avatar.mjs')return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/shared/avatar.mjs',import.meta.url),'utf8')})
+      if(path==='/duet/assets/shared/avatar-ui.mjs')return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/shared/avatar-ui.mjs',import.meta.url),'utf8')})
       if (path === '/duet/') { await route.fulfill({ contentType: 'text/html', body: html }); return }
       if (path.startsWith('/duet/assets/') && path.endsWith('/identity.mjs')) return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.slice('/duet/assets/'.length),import.meta.url),'utf8')})
       if (path.endsWith('tutorial-request.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/tutorial-request.mjs',import.meta.url),'utf8')});return}
@@ -31,6 +33,12 @@ try {
         assert.equal(req.headers()['x-duplex-settings'],'1');feedback.push(req.postDataJSON())
         if(feedback.length===1){await route.fulfill({status:503,json:{persisted:false}});return}
         json={persisted:true}
+      } else if (path.endsWith('/duet/nickname')) {
+        const input=req.postDataJSON()
+        assert.equal(req.headers()['x-duplex-settings'],'1')
+        assert.equal(input.revision,config.revision)
+        if(input.nickname==='每天陪我看星星')json={ok:false,reason:'昵称最多5个汉字或2个英文单词；中英混用最多5个字符'}
+        else {config.nickname=input.nickname;config.revision++;json={ok:true,nickname:config.nickname,revision:config.revision}}
       } else if (path.endsWith('/voice/service-info')) {
         json = {status:'ok',models:{duplex:'duet-duplex-v0.1',tts:'duet-tts-v0.1'}}
       } else if (path.endsWith('/voice/config')) {
@@ -50,11 +58,44 @@ try {
       await route.fulfill({ json })
     })
     await page.goto('http://localhost:19200/duet/')
+    await page.locator('#avatarWebOnly').waitFor()
+    await page.evaluate(()=>{window.runtimeChannel=new BroadcastChannel('dsh.duet.avatar.v1');runtimeChannel.postMessage({type:'presentation',mode:'recovering'})})
+    await page.waitForFunction(()=>document.querySelector('#avatarPresentationStatus').textContent.includes('恢复中'))
+    assert.equal(await page.locator('#avatarWebOnly').isChecked(),false)
+    assert.equal(await page.locator('#avatarRetryDesktop').isVisible(),true)
+    await page.evaluate(()=>runtimeChannel.postMessage({type:'presentation',mode:'desktop'}))
+    await page.waitForFunction(()=>document.querySelector('#avatarPresentationStatus').textContent.includes('桌面浮动窗口'))
+    assert.equal(await page.locator('#avatarRetryDesktop').isVisible(),false)
+    await page.evaluate(()=>runtimeChannel.close())
     await page.waitForFunction(() => !document.getElementById('saveDuet').disabled)
     assert.equal(await page.locator('#debugTools').isVisible(), debug)
     assert.equal(await page.locator('#authToken').count(), 0)
     assert.equal(await page.locator('#advancedConnection').isVisible(), true)
     assert.equal(await page.locator('#authState').textContent(), '已配置')
+    assert.equal(await page.locator('#avatarSize').getAttribute('data-size'),'large')
+    for(const size of ['medium','small','large']){
+      await page.locator('#avatarSize').focus();await page.keyboard.press(size==='small'?'Space':'Enter')
+      assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('dsh.duet.avatar.v1')).size),size)
+      assert.equal(await page.locator(`#avatarSize [data-size-square=${size}]`).getAttribute('stroke-width'),'2.8')
+      assert.equal(await page.locator('#avatarSize rect[stroke-width="1"]').count(),2)
+      assert.equal(await page.locator('#avatarSize [stroke-dasharray]').count(),0)
+    }
+    await page.evaluate(()=>{localStorage.setItem('dsh.duet.avatar.v1',JSON.stringify({enabled:true,webOnly:true,size:'small'}));window.dispatchEvent(new StorageEvent('storage',{key:'dsh.duet.avatar.v1'}))})
+    assert.equal(await page.locator('#avatarSize').getAttribute('data-size'),'small')
+    assert.equal(await page.locator('#avatarWebOnly').isChecked(),true)
+    await page.locator('#avatarEnabled').click();await page.keyboard.press('Escape')
+    assert.equal(await page.locator('#avatarEnabled').isChecked(),true)
+    assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('dsh.duet.avatar.v1')).enabled),true)
+    await page.locator('#avatarEnabled').click();await page.locator('[data-avatar-close-choice=confirm]').click()
+    assert.equal(await page.locator('#avatarEnabled').isChecked(),false)
+    await page.locator('#avatarEnabled').check()
+    await page.locator('#assistantNickname').fill('每天陪我看星星')
+    await page.locator('#saveNickname').click()
+    await page.getByText('昵称最多5个汉字或2个英文单词；中英混用最多5个字符',{exact:true}).waitFor()
+    await page.locator('#assistantNickname').fill('沐沐')
+    await page.locator('#saveNickname').click()
+    await page.getByText('已保存，下次开启语音时使用这个昵称。',{exact:true}).waitFor()
+    assert.equal(config.nickname,'沐沐')
     assert.equal(await page.locator('#duplexModel').textContent(), 'duet-duplex-v0.1')
     assert.equal(await page.locator('#ttsModel').textContent(), 'duet-tts-v0.1')
     assert.doesNotMatch(await page.locator('body').innerText(), /VOICE WORKSPACE|主模型|默认不占用模型|不会自动语音播放|开始前不会自动发送/)

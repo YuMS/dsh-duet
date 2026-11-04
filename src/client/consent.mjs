@@ -18,12 +18,13 @@ export function createAudioUploadConsent(storage) {
     const notify = dismissed; dismissed = null
     if (!confirmed) notify?.()
   }
-  const request = (onAccept, onDismiss) => {
+  const request = (onAccept, onDismiss, {origin='page'} = {}) => {
     if (granted()) { onAccept(); return }
     if (dialog) { dialog.querySelector('button')?.focus(); return }
     dismissed = onDismiss
     dialog = document.createElement('dialog')
     dialog.id = 'duet-audio-consent'
+    dialog.dataset.duetAvatarSurface = '100';dialog.dataset.duetSurfaceOrigin=origin
     dialog.setAttribute('aria-labelledby', 'duet-audio-consent-title')
     dialog.setAttribute('aria-describedby', 'duet-audio-consent-description')
     dialog.style.cssText = 'max-width:380px;width:calc(100vw - 40px);border:1px solid #9aa8b8;border-radius:16px;padding:24px;background:Canvas;color:CanvasText;font:14px/1.7 system-ui;box-shadow:0 16px 60px #0004'
@@ -39,6 +40,7 @@ export function createAudioUploadConsent(storage) {
     for (const [label, agree] of [['暂不开启', false], ['同意并开启', true]]) {
       const button = document.createElement('button')
       button.type = 'button'; button.textContent = label
+      if(agree)button.dataset.duetUserGesture=''
       button.style.cssText = `padding:8px 14px;border-radius:8px;border:1px solid #9aa8b8;cursor:pointer;background:${agree ? '#dcefff' : 'transparent'};color:${agree ? '#185a89' : 'inherit'}`
       button.onclick = () => {
         if (!agree) { cancel(); return }

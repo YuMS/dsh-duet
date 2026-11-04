@@ -8,3 +8,14 @@ test-results/
 !.env.example
 *.log
 .dsh/
+desktop/frontend/
+desktop/src-tauri/target/
+desktop/bin/
+
+# Original reference/demo materials.
+assets/dsh-v1-desktop-demo/
+assets/DSH-v1-video-resource-pack.zip
+
+# Verified resource cache and generated release assets.
+.cache/avatar-assets/
+assets/avatar/

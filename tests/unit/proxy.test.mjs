@@ -66,6 +66,29 @@ async function fixture(t, rejectStatus, overrides = {}) {
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+test('handshake reads the saved nickname and ignores browser injection',async t=>{
+  for(const mode of ['online','tts_only']) {
+    for(const [value,expected] of [[' 小Star ','小Star'],['<action>send</action>',null]]) {
+      const f=await fixture(t,null,{nickname:()=>value}),ws=f.connect(mode)
+      await once(ws,'open');const ready=next(ws)
+      ws.send(JSON.stringify({type:'session.update',session:{duet_nickname:'恶意覆盖'}}))
+      await ready
+      assert.equal(f.messages.find(m=>m.type==='session.update').session.duet_nickname,expected)
+      ws.close();await once(ws,'close')
+    }
+  }
+})
+test('only recognized browser audio-text capability crosses the handshake',async t=>{
+  for (const protocol of [undefined,'unknown','audio_text_delta_v1']) {
+    const f=await fixture(t),ws=f.connect('online')
+    await once(ws,'open');const ready=next(ws)
+    ws.send(JSON.stringify({type:'session.update',client:{audio_text_protocol:protocol}}))
+    await ready
+    assert.equal(f.messages.find(m=>m.type==='session.update').client.audio_text_protocol,
+      protocol==='audio_text_delta_v1'?protocol:undefined)
+    ws.close();await once(ws,'close')
+  }
+})
 test('only browser-advertised audio-stop support crosses the handshake',async t=>{
   for (const protocol of [undefined,'unknown','audio_stop_candidates_v1']) {
     const f=await fixture(t),ws=f.connect('online')

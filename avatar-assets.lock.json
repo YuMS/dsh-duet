@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "version": "duet-avatar-v1",
+  "rig": "duet-rig-v1",
+  "files": {
+    "character.glb": {
+      "url": "https://github.com/YuMS/dsh-duet/releases/download/avatar-v1/character.glb",
+      "bytes": 20847544,
+      "sha256": "b2413d92e9417ceaced3227ebb3331c78692b9843a8d545d6e799eb195c9beab"
+    },
+    "portrait.png": {
+      "url": "https://github.com/YuMS/dsh-duet/releases/download/avatar-v1/portrait.png",
+      "bytes": 1109641,
+      "sha256": "2271313cea7163f8c7f7acf88a5efa2605be7aea93fd93a55381048fc468ff27"
+    }
+  }
+}

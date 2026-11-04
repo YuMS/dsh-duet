@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { registerDuetProxy, duetConfig } from './proxy.mjs'
 import { DuetSettings, settingsWriteAllowed } from './settings.mjs'
+import { NICKNAME_LIMIT } from '../shared/nickname.mjs'
 import { IDENTITY_TRANSPORT_HEADER, IDENTITY_TRANSPORT } from '../shared/identity.mjs'
 import { ServiceNotices } from './notices.mjs'
 import { ServiceInfo } from './service-info.mjs'
@@ -14,6 +15,8 @@ import { PLUGIN_VERSION } from '../shared/state.mjs'
 import { buildSessionCatalog, sessionLabel } from '../shared/catalog.mjs'
 import { broadcastText, taskErrorText } from '../shared/result-notification.mjs'
 import { publicAsset } from './assets.mjs'
+import { registerAvatarHost } from './avatar.mjs'
+import { AvatarActivityOutbox } from './avatar-activity.mjs'
 import { duetEnv } from './environment.mjs'
 import { EndpointDiscovery } from './endpoint-discovery.mjs'
 import { StopTasks } from './stop-task.mjs'
@@ -185,7 +188,9 @@ export function apply(ctx, options = {}) {
 
   const voice = duetConfig()
   const settings = new DuetSettings(voice, { path: options.settingsPath, debug: options.debug === true || duetEnv('DEBUG') === '1' })
+  ctx.effect(() => { const avatar=registerAvatarHost(ctx);return ()=>avatar.close() })
   Object.assign(voice, settings.effective())
+  voice.nickname = () => settings.public().nickname
   const audit = new DuetTrace({ kind: 'host', plugin_version: PLUGIN_VERSION, pid: process.pid },
     { ...options.traceOptions, secrets: [voice.authorization] })
   ctx.effect(() => () => { void audit.close({ reason: 'plugin_dispose' }) })
@@ -195,6 +200,8 @@ export function apply(ctx, options = {}) {
   discovery.refreshIfDue()
   const feedbackStore = options.feedbackStore ?? (options.feedbackDisabled ? null : new RemoteFeedback(()=>discovery.effective(),{keyPath:options.feedbackIdentityPath}))
   const feedback = new FeedbackService(feedbackStore)
+  const avatarActivity = new AvatarActivityOutbox(()=>discovery.effective(), options.avatarActivityOptions)
+  ctx.effect(()=>()=>avatarActivity.close())
   let duetProxy
   ctx.effect(() => { duetProxy = registerDuetProxy(ctx, voice, feedback, () => (ctx.workspaceRegistry.list?.() || []).length > 0, discovery); return duetProxy })
 
@@ -416,6 +423,7 @@ export function apply(ctx, options = {}) {
   const turnKey = (sessionId, turn) => `${sessionId}:${String(turn)}`
 
   const completeJob = (job, event) => {
+    job.turn_end_reason = ['completed','aborted','error'].includes(event.data.reason?.kind) ? event.data.reason.kind : 'unknown'
     job.completed_at = nowSeconds()
     if (event.data.reason?.kind === 'aborted') {
       job.status = 'failed'
@@ -530,6 +538,33 @@ export function apply(ctx, options = {}) {
   })
 
   const handleApi = async (req, res, pathname) => {
+    if(req.method==='POST'&&pathname===`${ROUTE}/api/avatar/activity`){
+      const rejection=ctx.connection.requestRejection(req)
+      if(rejection){sendError(res,rejection,'DSH connection required');return}
+      if(!identityWriteAllowed(req)){sendError(res,403,'same-origin activity request required');return}
+      try{const value=await readJson(req);if(JSON.stringify(value).length>4096){sendError(res,413,'activity too large');return}sendJson(res,202,await avatarActivity.enqueue(value,feedback.user(req)))}
+      catch{sendError(res,400,'invalid_avatar_activity')}return
+    }
+    if (req.method === 'POST' && pathname === `${ROUTE}/api/duet/nickname`) {
+      const rejection = ctx.connection.requestRejection(req)
+      if (rejection) { sendError(res, rejection, '请先打开并登录 DSH 主页面'); return }
+      const boundRPC = req.headers['x-duplex-control-client'] === 'realtime-client-rpc-v1' && browserOwner(req)
+      if (!identityWriteAllowed(req) && !boundRPC) { sendError(res, 403, 'same-origin nickname request required'); return }
+      try {
+        const body = await readJson(req)
+        const result = await settings.renameNickname(body.nickname, body.revision)
+        // Nicknames do not retarget or close an active voice connection.
+        sendJson(res, 200, {ok:true, nickname:result.nickname, revision:result.revision,
+          action_response:'<action_response>rename_duet:ok</action_response>'})
+      } catch (error) {
+        const reason = error.message === NICKNAME_LIMIT ? NICKNAME_LIMIT
+          : error.message === 'settings_revision_conflict' ? '设置已更新，请刷新后重试' : '昵称保存失败，请重试'
+        sendJson(res, 200, {ok:false, reason,
+          error_code:error.message === NICKNAME_LIMIT ? 'invalid_nickname' : 'nickname_save_failed',
+          action_response:`<action_response>rename_duet:failed:${reason}</action_response>`})
+      }
+      return
+    }
     if(req.method==='POST' && pathname===`${ROUTE}/api/feedback`){
       const rejection = ctx.connection.requestRejection(req)
       if(rejection){sendError(res,rejection,'请先打开并登录 DSH 主页面');return}
@@ -564,6 +599,7 @@ export function apply(ctx, options = {}) {
         else feedbackStore?.ensureIdentity?.(req,res)
       } catch {sendJson(res,503,{error_code:'feedback_identity_unavailable'});return}
       sendJson(res, 200, { ...settings.public(), plugin_version: PLUGIN_VERSION, feedback_enabled: feedback.enabled,
+        avatar: { web_only: duetEnv('AVATAR_WEB_ONLY') === '1' },
         ...(identity?{feedback_identity:identity}:{}), connection: duetProxy?.snapshot?.() || { online: 0, tts_only: 0 } })
       return
     }
@@ -837,7 +873,8 @@ export function apply(ctx, options = {}) {
       // before that page can select its own current blank session.
       const pageCatalog = browserOwner(req) || req.headers['x-duet-catalog-scope'] === 'page'
       sendJson(res, 200, { sessions: await listSessions({forCatalog:!pageCatalog}),
-        duet_rpc_capabilities: typeof ctx.sessionController.cancel === 'function' ? ['stop_task_v1'] : [] })
+        duet_nickname: settings.public().nickname,
+        duet_rpc_capabilities: ['rename_duet_v1', ...(typeof ctx.sessionController.cancel === 'function' ? ['stop_task_v1'] : [])] })
       return
     }
     const stopRoute = pathname.match(new RegExp(`^${ROUTE}/api/sessions/([^/]+)/(execution|cancel)$`))
@@ -1191,7 +1228,7 @@ export function apply(ctx, options = {}) {
       const asset = publicAsset(pathname)
       if (req.method === 'GET' && asset) {
         const body = asset.body ?? await readFile(asset.url)
-        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' })
+        res.writeHead(200, { 'content-type': asset.contentType || 'text/javascript; charset=utf-8', 'cache-control': asset.cacheControl || (asset.contentType ? 'private, max-age=3600' : 'no-store') })
         res.end(body)
         return
       }

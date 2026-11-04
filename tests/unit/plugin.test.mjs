@@ -10,6 +10,39 @@ import { apply } from '../../src/host/plugin.mjs'
 import { HarnessRPCExecutor } from '../../src/client/rpc.mjs'
 import { browserSessionCatalog } from '../../src/client/workspaces.mjs'
 import { RemoteFeedback } from '../../src/host/feedback-files.mjs'
+import { PLUGIN_VERSION } from '../../src/shared/state.mjs'
+
+test('assistant rename persists before ok; failures retain nickname and never rename a session', async t => {
+  const dir = await mkdtemp(join(tmpdir(),'duet-nickname-'))
+  t.after(()=>rm(dir,{recursive:true,force:true}))
+  const h = makeHarness({options:{settingsPath:join(dir,'voice.json')}})
+  const headers = {'x-duplex-control-client':'realtime-client-rpc-v1','x-duet-browser-client':'a'.repeat(32)}
+  const rejected = await h.request('POST','/duplex-control/api/duet/nickname',{nickname:'沐沐'})
+  assert.equal(rejected.status,403)
+  const ok = await h.request('POST','/duplex-control/api/duet/nickname',{nickname:'沐沐'},headers)
+  assert.equal(ok.body.action_response,'<action_response>rename_duet:ok</action_response>')
+  const bad = await h.request('POST','/duplex-control/api/duet/nickname',{nickname:'每天陪我看星星'},headers)
+  assert.equal(bad.body.action_response,'<action_response>rename_duet:failed:昵称最多5个汉字或2个英文单词；中英混用最多5个字符</action_response>')
+  const catalog = await h.request('GET','/duplex-control/api/sessions')
+  assert.equal(catalog.body.duet_nickname,'沐沐')
+  assert.ok(catalog.body.duet_rpc_capabilities.includes('rename_duet_v1'))
+  assert.equal(catalog.body.sessions[0].label,'测试')
+})
+
+test('avatar activity accepts signed Desktop identity without a voice session and rejects untrusted requests',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'duet-activity-route-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+  const store=new RemoteFeedback(()=>({}),{keyPath:join(dir,'key')}),sent=[]
+  const options={feedbackStore:store,settingsPath:join(dir,'settings.json'),avatarActivityOptions:{root:join(dir,'events'),fetcher:async(url,options)=>{const row=JSON.parse(options.body);sent.push(row);return new Response(JSON.stringify({persisted:true,event_id:row.event_id}))}}}
+  const h=makeHarness({options}),config=await h.request('GET','/duplex-control/api/voice/config')
+  const token=config.headers['set-cookie'].split(';')[0].split('=')[1]
+  const headers={host:'localhost:3080','x-duet-identity-transport':'local-v1','x-duet-identity':token,'x-duplex-settings':'1','content-type':'application/json'}
+  const row={protocol:'avatar_activity_v1',event:'avatar.started',event_id:'event-1',instance_id:'instance-1',sequence:0,timestamp_ms:Date.now(),uptime_ms:0,presentation:'desktop',size:'large',bubble_size:'medium',notifications_enabled:true,pending_count:0,notification_count:0,position:null,user_id:'forged'}
+  assert.equal((await h.request('POST','/duplex-control/api/avatar/activity',row,headers)).status,202)
+  for(let i=0;i<100&&!sent.length;i++)await new Promise(r=>setTimeout(r,5))
+  assert.equal(sent.length,1);assert.equal(sent[0].user_id,store.userId({headers}));assert.equal(sent[0].plugin_version,PLUGIN_VERSION)
+  for(const bad of [{...headers,'x-duet-identity':'tampered'},{...headers,origin:'http://evil.invalid'}])assert.equal((await h.request('POST','/duplex-control/api/avatar/activity',row,bad)).status,403)
+  assert.equal((await h.request('POST','/duplex-control/api/avatar/activity',{...row,pending_count:-1},headers)).status,400)
+})
 
 function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRejection, sessionId = 's1', cancel } = {}) {
   let handler
@@ -99,7 +132,7 @@ test('stop_task_v1 Host route binds observed execution and emits terminal only a
   const calls = [], h = makeHarness({cancel: request => {calls.push(request);return {accepted:true}}})
   const headers = {'x-duet-browser-client':'page1'}
   const endpoint = '/duplex-control/api/sessions/s1'
-  assert.deepEqual((await h.request('GET','/duplex-control/api/sessions')).body.duet_rpc_capabilities,['stop_task_v1'])
+  assert.deepEqual((await h.request('GET','/duplex-control/api/sessions')).body.duet_rpc_capabilities,['rename_duet_v1','stop_task_v1'])
   assert.equal((await h.request('GET',endpoint+'/execution',undefined,headers)).status,409)
   h.emitSession('turn/start',{turn:1})
   h.emitSession('user/message',{source:{kind:'user'},message:{content:[{type:'text',text:'做个网站'}]}})
@@ -119,7 +152,7 @@ test('stop_task_v1 Host route binds observed execution and emits terminal only a
 
 test('DSH without cancel API does not advertise stop capability', async () => {
   const h = makeHarness()
-  assert.deepEqual((await h.request('GET','/duplex-control/api/sessions')).body.duet_rpc_capabilities,[])
+  assert.deepEqual((await h.request('GET','/duplex-control/api/sessions')).body.duet_rpc_capabilities,['rename_duet_v1'])
 })
 
 test('duet settings page is canonical and authenticated; legacy entry redirects without changing API routes',async()=>{
@@ -596,6 +629,8 @@ test('config exposes a signed credential only on explicit transport negotiation 
   const writeHeaders={...headers,host:'localhost:3080','x-duplex-settings':'1','content-type':'application/json'}
   const input={revision:desktop.body.revision,backend_url:'ws://127.0.0.1:19991/ws'}
   assert.equal((await h.request('PUT','/duplex-control/api/voice/config',input,writeHeaders)).status,200)
+  const renamed=await h.request('POST','/duplex-control/api/duet/nickname',{nickname:'小多',revision:input.revision+1},writeHeaders)
+  assert.equal(renamed.status,200);assert.equal(renamed.body.ok,true);assert.equal(renamed.body.nickname,'小多')
   for(const badHeaders of [
     {...writeHeaders,'x-duet-identity':'tampered'},
     {...writeHeaders,'x-duet-identity':undefined},
@@ -603,7 +638,10 @@ test('config exposes a signed credential only on explicit transport negotiation 
     {...writeHeaders,origin:'http://evil.invalid'},
     {...writeHeaders,origin:'null'},
     {...writeHeaders,'x-duplex-settings':undefined},
-  ])assert.equal((await h.request('POST','/duplex-control/api/feedback',{},badHeaders)).status,403)
+  ]){
+    assert.equal((await h.request('POST','/duplex-control/api/feedback',{},badHeaders)).status,403)
+    assert.equal((await h.request('POST','/duplex-control/api/duet/nickname',{nickname:'小多'},badHeaders)).status,403)
+  }
   const denied=makeHarness({authRejection:401,options:{feedbackStore:store}})
   assert.equal((await denied.request('GET','/duplex-control/api/voice/config',undefined,headers)).status,401)
   assert.equal((await denied.request('POST','/duplex-control/api/feedback',{},writeHeaders)).status,401)
