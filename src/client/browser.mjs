@@ -29,15 +29,45 @@ export function mountDuet(ctx) {
   let nextPollAt = 0, pollController, pollWakePending = false, pollFailureSince = null, pollFailures = 0, pollGeneration = -1
   const notices = mountNotice(() => controls)
   const labels = new Map()
-  const resultResume = {}
+  // ── 手术改造：resultResume 持久化 ─────────────────────────────────────────
+  // 原版 resultResume 是纯内存变量，页面刷新/崩溃即丢。改为 localStorage 持久化，
+  // 页面重载后也能恢复 epoch/cursor，从断连点续传结果推送（修复记忆丢失）。
+  const RESUME_STORAGE_KEY = 'dsh-duet.resultResume.v1'
+  function loadResultResume() {
+    try {
+      const raw = localStorage.getItem(RESUME_STORAGE_KEY)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      if (parsed && Number.isSafeInteger(parsed.cursor) && typeof parsed.epoch === 'string' && parsed.epoch.length <= 128) {
+        return { epoch: parsed.epoch, cursor: parsed.cursor }
+      }
+    } catch { /* corrupted storage is non-fatal */ }
+    return {}
+  }
+  let resultResume = loadResultResume()
+  function persistResultResume() {
+    try { localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(resultResume)) } catch { /* storage may be full/unavailable */ }
+  }
+  // ── 手术改造：自动重连状态 ───────────────────────────────────────────────
+  // 上游 duet-router-acc 每 4~10 分钟强制 1006 重置，无法阻止。此处对异常断开
+  // 自动重连（指数退避），把恢复窗口从「用户手动重开」压缩到秒级。
+  const AUTO_RECONNECT_MAX = 5
+  const AUTO_RECONNECT_BACKOFF = [2000, 4000, 8000, 16000, 30000]
+  let autoReconnectAttempts = 0
+  let autoReconnectTimer = null
+  let userOffAt = 0
+  const userOffRequested = () => userOffAt > 0
   let localSync
   let clientTraceId = null, diagnosticCount = 0
   let connectionGuidance = null, reportHintShown = null
   let tutorial, teaching, ratingPanel, connectionHint, stopControlsLayout, stopSettings
+  // 手术改造：客户端版本标记 + 断连期间诊断暂存（重连后随 WS 回传，便于取证）。
+  const CLIENT_REVISION = 'duet-client-r2-auto-reconnect'
+  const pendingDiagnostics = []
   const diagnostic = data => {
     if (++diagnosticCount > 100 && !diagnosticPayload(data)) return
     const bounded = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 4000) : v]))
-    const body = JSON.stringify({ client_trace_id: clientTraceId, plugin_version: PLUGIN_VERSION, page_id: pageId,
+    const body = JSON.stringify({ client_trace_id: clientTraceId, plugin_version: PLUGIN_VERSION, client_revision: CLIENT_REVISION, page_id: pageId,
       utc: new Date().toISOString(), visibility: document.visibilityState, ...bounded })
     if (body.length > 24000) return
     void identityFetch('/duplex-control/api/voice/diagnostic', { method: 'POST', credentials: 'same-origin',
@@ -86,11 +116,14 @@ export function mountDuet(ctx) {
     let firstInput = false
     const report = data => {
       const row = {...data, event_id:crypto.randomUUID(), client_trace_id:connectionTraceId,
-        page_id:pageId, plugin_version:PLUGIN_VERSION, mode, elapsed_ms:Math.round(performance.now()-started), visibility:document.visibilityState}
+        page_id:pageId, plugin_version:PLUGIN_VERSION, client_revision:CLIENT_REVISION, mode, elapsed_ms:Math.round(performance.now()-started), visibility:document.visibilityState}
       diagnostic(row)
       const payload = diagnosticPayload(row)
       if (payload && ws?.readyState === WebSocket.OPEN && !closed && ws.bufferedAmount < 100000) {
         try { ws.send(JSON.stringify({type:'client.diagnostic', ...payload})) } catch { /* HTTP fallback remains best effort. */ }
+      } else if (payload && pendingDiagnostics.length < 20) {
+        // 断连后 WS 已关闭：暂存，重连成功时随首个连接回传（宿主 trace 可取证）。
+        pendingDiagnostics.push(payload)
       }
     }
     let ws, closed = false, release, ready = false, stopComposer, stopBridge
@@ -113,7 +146,7 @@ export function mountDuet(ctx) {
         session_id:s.session_id, label:s.label, active:s.active, running:Boolean(s.running), updated_at:s.updated_at,
       })),
       interactions: interactions.snapshot(),
-    }), report, resultResume)
+    }), report, resultResume, persistResultResume)
     const stopInteractions = interactions.subscribe(() => resultPush.changed())
     const rpc = new HarnessRPCExecutor(send, fetch, report, async (request, signal) =>
       (await interactions(request, signal)) ?? composer.execute(request, signal), rows =>
@@ -136,10 +169,18 @@ export function mountDuet(ctx) {
       playing: () => audio.playing(),
       async close(details = {reason:'unknown'}) {
         report({ event: 'browser.connection_close', ...details, buffered_bytes: ws?.bufferedAmount })
-        // Explicit mode changes start a fresh listening window. An unexpected
-        // socket close retains only this page's last acknowledged cursor.
-        if (mode === 'online' && ws?.readyState === WebSocket.OPEN) {
+        // 手术改造：只在用户主动关闭/页面卸载时清除 resume。模式切换、错误、
+        // 自动重连都保留 epoch/cursor，断连后能从断点续传上下文（修复记忆丢失）。
+        const discardResume = details.reason === 'user_off' || details.reason === 'unmount' || details.reason === 'page_unload'
+        if (discardResume) {
+          // 用户主动关闭/页面卸载：作废待执行的自动重连，尊重用户意图。
+          userOffAt = Date.now()
+          if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null }
+          autoReconnectAttempts = 0
+        }
+        if (mode === 'online' && ws?.readyState === WebSocket.OPEN && discardResume) {
           delete resultResume.cursor; delete resultResume.epoch
+          persistResultResume()
         }
         closed = true
         clearTimeout(startupTimer)
@@ -174,6 +215,10 @@ export function mountDuet(ctx) {
       ws = new WebSocket(voiceSocketUrl({ mode, plugin_version: PLUGIN_VERSION, client_trace_id: connectionTraceId, page_id: pageId }), identityVoiceProtocols())
       ws.onopen = () => {
         report({ event: 'browser.connection_start', page_binding: 'connection_owner_v1' })
+        // 手术改造：把上一次连接断连期间暂存的诊断随本次连接回传，便于确认真实断连原因。
+        for (const pending of pendingDiagnostics.splice(0, 20)) {
+          try { ws.send(JSON.stringify({ type: 'client.diagnostic', ...pending })) } catch { /* best effort */ }
+        }
         send({ type: 'session.update', client: {audio_stop_protocol:AUDIO_STOP_PROTOCOL} })
         if (mode === 'online') stopComposer = observeComposer(ctx, composer, send)
       }
@@ -235,6 +280,14 @@ export function mountDuet(ctx) {
               clearTimeout(startupTimer)
               receive({ type: 'ready' })
               try { audio.connectedChime() } catch { /* A notification must not break voice. */ }
+              // 手术改造：自动重连成功后立即强制同步本地 feed + 重置重连计数，
+              // 避免断连期间的 session 状态/结果变更被遗漏。
+              if (autoReconnectAttempts > 0) {
+                report({ event: 'browser.auto_reconnect_succeeded', attempts: autoReconnectAttempts })
+                autoReconnectAttempts = 0
+                localSync?.refresh()
+                pollWakePending = true; nextPollAt = 0
+              }
             }
           }
           audio.event(message, send)
@@ -251,23 +304,75 @@ export function mountDuet(ctx) {
         stopInteractions?.()
         stopComposer?.()
         stopBridge?.(); stopBridge = null
-        report({ event: 'browser.ws_closed', code: event.code, reason: event.reason, was_clean: event.wasClean })
+        report({ event: 'browser.ws_closed', code: event.code, reason: event.reason, was_clean: event.wasClean, closed })
         rpc.close()
         release?.()
-        if (!closed) receive({ type: 'error', code: event.code === 1013 ? 'capacity_exhausted' : 'voice_disconnected' })
+        if (!closed) {
+          // 手术改造：除正常关闭(1000)与容量不足(1013)外，一律尝试自动重连。
+          // 之前只匹配 1006/1011，若代理或宿主转发其他码就会漏掉，表现为「无恢复」。
+          if (event.code !== 1000 && event.code !== 1013 && autoReconnectAttempts < AUTO_RECONNECT_MAX) {
+            const delay = AUTO_RECONNECT_BACKOFF[Math.min(autoReconnectAttempts, AUTO_RECONNECT_BACKOFF.length - 1)]
+            autoReconnectAttempts += 1
+            const reconnectMode = mode
+            report({ event: 'browser.auto_reconnect_scheduled', attempt: autoReconnectAttempts, delay_ms: delay, close_code: event.code })
+            persistResultResume()
+            try { notice(`语音连接已断开（${event.code}），正在自动重连（第 ${autoReconnectAttempts} 次）…`) } catch { /* notice is cosmetic */ }
+            autoReconnectTimer = setTimeout(() => {
+              autoReconnectTimer = null
+              // 用户可能在退避期间主动关闭：尊重用户意图，不再重连。
+              if (state.mode === 'off' && userOffRequested()) { autoReconnectAttempts = 0; return }
+              report({ event: 'browser.auto_reconnect_fired', attempt: autoReconnectAttempts, mode: state.mode })
+              if (state.mode === 'off') {
+                // 被错误路径提前置 off：先恢复原模式再重连，避免 replaceConnection 直接 return。
+                void state.setMode(reconnectMode, { reason: 'auto_reconnect' })
+              } else {
+                void state.replaceConnection({ reason: 'auto_reconnect' })
+              }
+            }, delay)
+            return
+          }
+          receive({ type: 'error', code: event.code === 1013 ? 'capacity_exhausted' : 'voice_disconnected' })
+        }
       }
       ws.onerror = () => { report({ event: 'browser.ws_error' }); if (!closed) receive({ type: 'error', code: 'voice_connection_failed' }) }
     }
     if (navigator.locks) {
-      void navigator.locks.request('dsh-duplex-voice-owner', { ifAvailable: true }, async lock => {
+      void (async () => {
+        // 手术改造：旧连接释放锁是异步的；立即 ifAvailable 可能拿到 null，
+        // 被误判为 voice_tab_in_use 而直接失败（表现为断连后毫无恢复迹象）。
+        // 此处短重试，消除锁释放竞态。
+        let acquired = false
+        for (let attempt = 0; attempt < 5 && !closed; attempt++) {
+          acquired = await new Promise(resolve => {
+            let settled = false
+            const done = value => { if (!settled) { settled = true; resolve(value) } }
+            navigator.locks.request('dsh-duplex-voice-owner', { ifAvailable: true }, lock => {
+              if (!lock) { done(false); return }
+              done(true)
+              return new Promise(hold => { release = hold })
+            }).catch(() => done(false))
+          })
+          if (acquired || closed) break
+          await new Promise(resolve => setTimeout(resolve, 150))
+        }
         if (closed) return
-        if (!lock) { receive({ type: 'error', code: 'voice_tab_in_use' }); return }
-        const held = new Promise(resolve => { release = resolve })
+        if (!acquired) {
+          if (autoReconnectAttempts > 0 && autoReconnectAttempts < AUTO_RECONNECT_MAX) {
+            // 重连场景仍拿不到锁：交给退避再来一次，不直接置 off。
+            autoReconnectAttempts += 1
+            const delay = AUTO_RECONNECT_BACKOFF[Math.min(autoReconnectAttempts - 1, AUTO_RECONNECT_BACKOFF.length - 1)]
+            autoReconnectTimer = setTimeout(() => {
+              autoReconnectTimer = null
+              void state.replaceConnection({ reason: 'auto_reconnect' })
+            }, delay)
+            return
+          }
+          receive({ type: 'error', code: 'voice_tab_in_use' }); return
+        }
         // Opening may hang; ownership ends when close() releases it, not when
         // a fetch or browser permission request eventually resolves.
         void open().catch(error => { report({event:'browser.open_failed',name:error?.name,phase:'opening'}); if (!closed) receive({type:'error',code:opening.signal.aborted?'voice_start_timeout':error.message||'voice_connection_failed'}) })
-        await held
-      }).catch(() => { if (!closed) receive({ type: 'error', code: 'voice_connection_failed' }) })
+      })().catch(() => { if (!closed) receive({ type: 'error', code: 'voice_connection_failed' }) })
     } else queueMicrotask(() => receive({ type: 'error', code: 'voice_lock_unavailable' }))
     return connection
   }
@@ -453,6 +558,8 @@ export function mountDuet(ctx) {
   teachingObserver.observe(document.body, { subtree: true, childList: true })
   return () => {
     disposed = true
+    if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null }
+    autoReconnectAttempts = 0
     window.removeEventListener('pagehide', pageHide)
     pollController?.abort()
     unwatchSessions?.(); unwatchWorkspaces?.()

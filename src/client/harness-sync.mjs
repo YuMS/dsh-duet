@@ -3,8 +3,8 @@ export const SYNC_CAPABILITIES = ['session_state', 'pending_interactions', 'task
 
 /** Coalesced state and acknowledged results on the negotiated voice connection. */
 export class HarnessSync {
-  constructor(send, feed, readState, report = () => {}, resume = {}) {
-    Object.assign(this, { send, feed, readState, report, resume })
+  constructor(send, feed, readState, report = () => {}, resume = {}, onResumeChange = () => {}) {
+    Object.assign(this, { send, feed, readState, report, resume, onResumeChange })
     this.active = false; this.closed = false; this.sequence = 0; this.abort = new AbortController()
   }
   offer(value) {
@@ -12,8 +12,12 @@ export class HarnessSync {
         JSON.stringify(value.capabilities) !== JSON.stringify(SYNC_CAPABILITIES) ||
         !/^[a-f0-9]{32}$/.test(value.connection_id) || !Number.isSafeInteger(value.cursor) || value.cursor < 0 || typeof value.epoch !== 'string') return
     this.offerValue = value; this.cursor = value.cursor; this.epoch = value.epoch
-    if (this.resume.epoch === value.epoch && Number.isSafeInteger(this.resume.cursor)) this.cursor = Math.min(this.resume.cursor, value.cursor)
+    // 手术改造：无论 epoch 是否变化都取 min(resume.cursor, value.cursor) 续传。
+    // cursor 是 host 单调递增的 completionSequence，跨 epoch 有效；上游重启时
+    // value.cursor 变小，min 自然从头开始，不会错位（修复 epoch 变化导致的记忆丢失）。
+    if (Number.isSafeInteger(this.resume.cursor)) this.cursor = Math.min(this.resume.cursor, value.cursor)
     Object.assign(this.resume, {epoch:this.epoch,cursor:this.cursor})
+    this.onResumeChange(this.resume)
     this.send({type:'harness.sync.subscribe', connection_id:value.connection_id, protocol:value.protocol,
       capabilities:SYNC_CAPABILITIES, cursor:this.cursor, epoch:this.epoch, sequence:0, state:this.readState()})
     this.timer = setTimeout(() => this.fallback('negotiation_timeout'), 5000)
@@ -64,6 +68,7 @@ export class HarnessSync {
       this.abort.signal.addEventListener('abort', onAbort, {once:true}); retry()
     })
     this.cursor = job.completion_seq; this.resume.cursor = this.cursor
+    this.onResumeChange(this.resume)
   }
   changed() {
     if (!this.active || this.closed) return
