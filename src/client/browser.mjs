@@ -29,7 +29,32 @@ export function mountDuet(ctx) {
   let nextPollAt = 0, pollController, pollWakePending = false, pollFailureSince = null, pollFailures = 0, pollGeneration = -1
   const notices = mountNotice(() => controls)
   const labels = new Map()
-  const resultResume = {}
+  // ── 手术改造：resultResume 持久化 ─────────────────────────────────────────
+  // 原版 resultResume 是纯内存变量，页面刷新/崩溃即丢。改为 localStorage 持久化，
+  // 页面重载后也能恢复 epoch/cursor，从断连点续传结果推送（修复记忆丢失）。
+  const RESUME_STORAGE_KEY = 'dsh-duet.resultResume.v1'
+  function loadResultResume() {
+    try {
+      const raw = localStorage.getItem(RESUME_STORAGE_KEY)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      if (parsed && Number.isSafeInteger(parsed.cursor) && typeof parsed.epoch === 'string' && parsed.epoch.length <= 128) {
+        return { epoch: parsed.epoch, cursor: parsed.cursor }
+      }
+    } catch { /* corrupted storage is non-fatal */ }
+    return {}
+  }
+  let resultResume = loadResultResume()
+  function persistResultResume() {
+    try { localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(resultResume)) } catch { /* storage may be full/unavailable */ }
+  }
+  // ── 手术改造：自动重连状态 ───────────────────────────────────────────────
+  // 上游 duet-router-acc 每 4~10 分钟强制 1006 重置，无法阻止。此处对异常断开
+  // 自动重连（指数退避），把恢复窗口从「用户手动重开」压缩到秒级。
+  const AUTO_RECONNECT_MAX = 5
+  const AUTO_RECONNECT_BACKOFF = [2000, 4000, 8000, 16000, 30000]
+  let autoReconnectAttempts = 0
+  let autoReconnectTimer = null
   let localSync
   let clientTraceId = null, diagnosticCount = 0
   let connectionGuidance = null, reportHintShown = null
@@ -113,7 +138,7 @@ export function mountDuet(ctx) {
         session_id:s.session_id, label:s.label, active:s.active, running:Boolean(s.running), updated_at:s.updated_at,
       })),
       interactions: interactions.snapshot(),
-    }), report, resultResume)
+    }), report, resultResume, persistResultResume)
     const stopInteractions = interactions.subscribe(() => resultPush.changed())
     const rpc = new HarnessRPCExecutor(send, fetch, report, async (request, signal) =>
       (await interactions(request, signal)) ?? composer.execute(request, signal), rows =>
@@ -136,10 +161,12 @@ export function mountDuet(ctx) {
       playing: () => audio.playing(),
       async close(details = {reason:'unknown'}) {
         report({ event: 'browser.connection_close', ...details, buffered_bytes: ws?.bufferedAmount })
-        // Explicit mode changes start a fresh listening window. An unexpected
-        // socket close retains only this page's last acknowledged cursor.
-        if (mode === 'online' && ws?.readyState === WebSocket.OPEN) {
+        // 手术改造：只在用户主动关闭/页面卸载时清除 resume。模式切换、错误、
+        // 自动重连都保留 epoch/cursor，断连后能从断点续传上下文（修复记忆丢失）。
+        const discardResume = details.reason === 'user_off' || details.reason === 'unmount' || details.reason === 'page_unload'
+        if (mode === 'online' && ws?.readyState === WebSocket.OPEN && discardResume) {
           delete resultResume.cursor; delete resultResume.epoch
+          persistResultResume()
         }
         closed = true
         clearTimeout(startupTimer)
@@ -235,6 +262,14 @@ export function mountDuet(ctx) {
               clearTimeout(startupTimer)
               receive({ type: 'ready' })
               try { audio.connectedChime() } catch { /* A notification must not break voice. */ }
+              // 手术改造：自动重连成功后立即强制同步本地 feed + 重置重连计数，
+              // 避免断连期间的 session 状态/结果变更被遗漏。
+              if (autoReconnectAttempts > 0) {
+                report({ event: 'browser.auto_reconnect_succeeded', attempts: autoReconnectAttempts })
+                autoReconnectAttempts = 0
+                localSync?.refresh()
+                pollWakePending = true; nextPollAt = 0
+              }
             }
           }
           audio.event(message, send)
@@ -254,7 +289,22 @@ export function mountDuet(ctx) {
         report({ event: 'browser.ws_closed', code: event.code, reason: event.reason, was_clean: event.wasClean })
         rpc.close()
         release?.()
-        if (!closed) receive({ type: 'error', code: event.code === 1013 ? 'capacity_exhausted' : 'voice_disconnected' })
+        if (!closed) {
+          // 手术改造：异常断开（1006=上游强制重置 / 1011=服务器错误）自动重连，
+          // 把恢复窗口从「用户手动重开」压缩到秒级；1000/1013 走原有错误路径。
+          if ((event.code === 1006 || event.code === 1011) && autoReconnectAttempts < AUTO_RECONNECT_MAX) {
+            const delay = AUTO_RECONNECT_BACKOFF[autoReconnectAttempts]
+            autoReconnectAttempts += 1
+            report({ event: 'browser.auto_reconnect_scheduled', attempt: autoReconnectAttempts, delay_ms: delay })
+            persistResultResume()
+            autoReconnectTimer = setTimeout(() => {
+              autoReconnectTimer = null
+              void state.replaceConnection({ reason: 'auto_reconnect' })
+            }, delay)
+            return
+          }
+          receive({ type: 'error', code: event.code === 1013 ? 'capacity_exhausted' : 'voice_disconnected' })
+        }
       }
       ws.onerror = () => { report({ event: 'browser.ws_error' }); if (!closed) receive({ type: 'error', code: 'voice_connection_failed' }) }
     }
@@ -453,6 +503,8 @@ export function mountDuet(ctx) {
   teachingObserver.observe(document.body, { subtree: true, childList: true })
   return () => {
     disposed = true
+    if (autoReconnectTimer) { clearTimeout(autoReconnectTimer); autoReconnectTimer = null }
+    autoReconnectAttempts = 0
     window.removeEventListener('pagehide', pageHide)
     pollController?.abort()
     unwatchSessions?.(); unwatchWorkspaces?.()
