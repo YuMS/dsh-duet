@@ -1,7 +1,7 @@
 /** Same-origin voice relay; endpoint and compatibility policy belong to the DSH host. */
 import { createRequire } from 'node:module'
 import { DuetTrace } from './trace.mjs'
-import { ConnectionDiagnostics } from './diagnostics.mjs'
+import { ConnectionDiagnostics, DiagnosticOutbox } from './diagnostics.mjs'
 import { DIAGNOSTICS_PROTOCOL } from '../shared/diagnostics.mjs'
 import { PLUGIN_VERSION } from '../shared/state.mjs'
 import { duetEnv } from './environment.mjs'
@@ -63,6 +63,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
     handleProtocols: protocols => protocols.has(VOICE_PROTOCOL) ? VOICE_PROTOCOL : false })
   const connections = new Map()
   const reporters = new Map()
+  const diagnosticOutbox = new DiagnosticOutbox(config.diagnosticOptions)
   const stop = ctx.webServer.registerUpgrade({
     path: '/duplex-control/voice/ws',
     handler(req, socket, head) {
@@ -111,7 +112,8 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
         try{anonymousUserId=feedback?.user(req)}catch{ /* Identity is optional, not admission. */ }
         const clientMetadata=sessionMetadata(params,mode,anonymousUserId)
         diagnostics = new ConnectionDiagnostics({client_trace_id:clientMetadata.client_trace_id,
-          page_id:clientMetadata.page_id, plugin_version:clientMetadata.version, host_version:PLUGIN_VERSION, mode})
+          page_id:clientMetadata.page_id, plugin_version:clientMetadata.version, host_version:PLUGIN_VERSION, mode},
+          diagnosticOutbox.fetcher, diagnosticOutbox)
         reporters.set(clientMetadata.client_trace_id, {diagnostics, page_id:clientMetadata.page_id, user:anonymousUserId})
         // Allow keepalive HTTP diagnostics to arrive after the browser socket closed.
         front.once('close', () => { const timer=setTimeout(()=>reporters.delete(clientMetadata.client_trace_id),30000); timer.unref() })
@@ -284,7 +286,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
       })
     },
   })
-  const dispose = () => { stop(); for (const socket of server.clients) socket.close(1001); server.close() }
+  const dispose = () => { stop(); for (const socket of server.clients) socket.close(1001); server.close(); diagnosticOutbox.dispose() }
   dispose.snapshot = () => ({
     online: [...connections.values()].filter(c => c.mode === 'online' && c.ready).length,
     tts_only: [...connections.values()].filter(c => c.mode === 'tts_only' && c.ready).length,
