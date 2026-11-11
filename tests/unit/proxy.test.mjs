@@ -66,6 +66,41 @@ async function fixture(t, rejectStatus, overrides = {}) {
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+test('individual voice issue is persisted and forwarded to browser',async t=>{
+  const applied=[]
+  const f=await fixture(t,null,{prepareVoice:async()=>'voice_'+'a'.repeat(32),applyVoiceIssue:value=>{applied.push(value)}})
+  const ws=await begin(f,'online')
+  const event={type:'voice.unavailable',voice_id:'voice_'+'a'.repeat(32),code:'voice_audio_missing',selected:'default',reconnect_required:false}
+  const message=next(ws);f.connections[0].send(JSON.stringify(event))
+  assert.deepEqual(await message,event);assert.deepEqual(applied,[event])
+  ws.close();await once(ws,'close')
+})
+test('voice disable policy reaches the browser only after reset is queued',async t=>{
+  const applied=[]
+  const f=await fixture(t,null,{prepareVoice:async()=>'voice_'+'a'.repeat(32),applyVoicePolicy:value=>{applied.push(value)}})
+  const ws=await begin(f,'online')
+  const event={type:'voice.policy',enabled:false,selected:'default',reconnect_required:true}
+  const message=next(ws)
+  f.connections[0].send(JSON.stringify(event))
+  assert.deepEqual(await message,event);assert.deepEqual(applied,[event])
+  ws.close();await once(ws,'close')
+})
+test('reference proof is negotiated on the voice socket and hidden from browser',async t=>{
+  const id='voice_'+'a'.repeat(32),challenge={voice_id:id,challenge_id:'c'.repeat(32)}
+  const f=await fixture(t,null,{prepareVoice:async()=>id,respondVoiceChallenge:async c=>{
+    assert.deepEqual(c,challenge);return {challenge_id:c.challenge_id,proof:'b'.repeat(64)}
+  }})
+  const ws=await begin(f,'tts_only'),seen=[]
+  ws.on('message',raw=>seen.push(JSON.parse(raw)))
+  const initial=f.messages.find(m=>m.type==='session.update')
+  assert.equal(initial.session.voice_id,id)
+  assert.equal(initial.client.voice_possession_protocol,'voice_possession_v1')
+  f.connections[0].send(JSON.stringify({type:'voice.challenge',challenge}))
+  for(let i=0;i<50&&!f.messages.some(m=>m.type==='voice.proof');i++)await new Promise(r=>setTimeout(r,10))
+  assert.equal(f.messages.find(m=>m.type==='voice.proof')?.proof,'b'.repeat(64))
+  assert.ok(!seen.some(m=>m.type==='voice.challenge'))
+  ws.close();await once(ws,'close')
+})
 test('handshake reads the saved nickname and ignores browser injection',async t=>{
   for(const mode of ['online','tts_only']) {
     for(const [value,expected] of [[' 小Star ','小Star'],['<action>send</action>',null]]) {

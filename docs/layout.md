@@ -142,6 +142,8 @@ Desktop 设置页在当前窗口的可关闭 iframe 弹层中打开，Web 仍使
 `browser.connection_hint_shown`。支持此能力的服务收到一次 `client.connection_hint` 展示上报，
 旧服务不接收该事件。教学隐藏、播报模式或尚未就绪不计作展示。
 
+可以在 duet 设置中修改音色。
+
 ## 本地存储
 
 助手昵称保存于 `voice.json`，与 DSH 会话名称独立；默认名称为 duet。

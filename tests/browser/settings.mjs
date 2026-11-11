@@ -28,6 +28,8 @@ try {
       if (path.endsWith('tutorial-request.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/tutorial-request.mjs',import.meta.url),'utf8')});return}
       if (path.endsWith('microphone.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/microphone.mjs',import.meta.url),'utf8')});return}
       if (path.endsWith('shortcuts.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/shortcuts.mjs',import.meta.url),'utf8')});return}
+      if (path.endsWith('voices.mjs')) return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/voices.mjs',import.meta.url),'utf8')})
+      if (path.endsWith('/api/voices')) return route.fulfill({json:{selected:'default',voices:[]}})
       let json = {}
       if(path.endsWith('/feedback')){
         assert.equal(req.headers()['x-duplex-settings'],'1');feedback.push(req.postDataJSON())

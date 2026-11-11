@@ -20,6 +20,7 @@ import { AvatarActivityOutbox } from './avatar-activity.mjs'
 import { duetEnv } from './environment.mjs'
 import { EndpointDiscovery } from './endpoint-discovery.mjs'
 import { StopTasks } from './stop-task.mjs'
+import { DuetVoices } from './voices.mjs'
 
 const ROUTE = '/duplex-control'
 const PAGE_ROUTE = '/duet'
@@ -141,12 +142,12 @@ function sendError(res, status, message) {
   sendJson(res, status, { detail: message })
 }
 
-async function readJson(req) {
+async function readJson(req, maximum = MAX_BODY_BYTES) {
   let size = 0
   const chunks = []
   for await (const chunk of req) {
     size += chunk.length
-    if (size > MAX_BODY_BYTES) throw new Error('request body is too large')
+    if (size > maximum) throw new Error('request body is too large')
     chunks.push(chunk)
   }
   if (chunks.length === 0) return {}
@@ -195,6 +196,12 @@ export function apply(ctx, options = {}) {
     { ...options.traceOptions, secrets: [voice.authorization] })
   ctx.effect(() => () => { void audit.close({ reason: 'plugin_dispose' }) })
   const discovery = new EndpointDiscovery(() => settings.effective(), {...options.endpointDiscoveryOptions, changed: () => {notices.invalidate();serviceInfo.invalidate()}})
+  const voices = new DuetVoices(() => discovery.effective(), {scope:()=>settings.effective().endpoints.online,...options.voiceOptions})
+  voice.prepareVoice = () => voices.prepare()
+  voice.respondVoiceChallenge = challenge => voices.respondChallenge(challenge)
+  voice.applyVoicePolicy = policy => voices.applyPolicy(policy)
+  voice.applyVoiceIssue = issue => voices.applyIssue(issue)
+  ctx.effect(() => () => voices.close())
   const notices = new ServiceNotices(() => discovery.effective(), (url,options) => discovery.fetch(url,options))
   const serviceInfo = new ServiceInfo(() => discovery.effective(), (url,options) => discovery.fetch(url,options))
   discovery.refreshIfDue()
@@ -538,6 +545,17 @@ export function apply(ctx, options = {}) {
   })
 
   const handleApi = async (req, res, pathname) => {
+    if(pathname===`${ROUTE}/api/voices`){
+      const rejection=ctx.connection.requestRejection(req)
+      if(rejection){sendError(res,rejection,'DSH connection required');return}
+      try {
+        if(req.method==='GET'){sendJson(res,200,await voices.refreshAvailability());return}
+        if(req.method!=='POST'){sendError(res,405,'method_not_allowed');return}
+        if(!identityWriteAllowed(req)){sendError(res,403,'same-origin voice request required');return}
+        sendJson(res,200,await voices.update(await readJson(req,14*1024*1024)))
+      }catch(error){sendError(res,400,/^[a-z_]+$/.test(error.message)?error.message:'voice_request_failed')}
+      return
+    }
     if(req.method==='POST'&&pathname===`${ROUTE}/api/avatar/activity`){
       const rejection=ctx.connection.requestRejection(req)
       if(rejection){sendError(res,rejection,'DSH connection required');return}

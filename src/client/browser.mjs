@@ -1,26 +1,26 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.2.0'
-import { DuetAudio, AUDIO_STOP_PROTOCOL } from './audio.mjs?v=0.2.0'
-import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.2.0'
-import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.2.0'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.2.0'
-import { mountTutorial } from './tutorial.mjs?v=0.2.0'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.2.1'
+import { DuetAudio, AUDIO_STOP_PROTOCOL } from './audio.mjs?v=0.2.1'
+import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.2.1'
+import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.2.1'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.2.1'
+import { mountTutorial } from './tutorial.mjs?v=0.2.1'
 import { mountAvatarTasks } from './avatar-tasks.mjs'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.2.0'
-import { mountRating } from './feedback.mjs?v=0.2.0'
-import { createAudioUploadConsent } from './consent.mjs?v=0.2.0'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.2.0'
-import { nativeInteractions } from './interactions.mjs?v=0.2.0'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.2.0'
-import { mountControlsLayout } from './controls-layout.mjs?v=0.2.0'
-import { mountNotice } from './notice.mjs?v=0.2.0'
-import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.2.0'
-import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.2.0'
-import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.2.0'
-import { sessionLabel } from '../shared/catalog.mjs?v=0.2.0'
-import { resultNotification } from '../shared/result-notification.mjs?v=0.2.0'
-import { HarnessSync } from './harness-sync.mjs?v=0.2.0'
-import { LocalSync } from './local-sync.mjs?v=0.2.0'
-import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.2.0'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.2.1'
+import { mountRating } from './feedback.mjs?v=0.2.1'
+import { createAudioUploadConsent } from './consent.mjs?v=0.2.1'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.2.1'
+import { nativeInteractions } from './interactions.mjs?v=0.2.1'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.2.1'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.2.1'
+import { mountNotice } from './notice.mjs?v=0.2.1'
+import { workspaceIssue, requireWorkspace, browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.2.1'
+import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.2.1'
+import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.2.1'
+import { sessionLabel } from '../shared/catalog.mjs?v=0.2.1'
+import { resultNotification } from '../shared/result-notification.mjs?v=0.2.1'
+import { HarnessSync } from './harness-sync.mjs?v=0.2.1'
+import { LocalSync } from './local-sync.mjs?v=0.2.1'
+import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.2.1'
 import { mountAvatar } from './avatar.mjs'
 import { mountAvatarSurfaces } from './avatar-surfaces.mjs'
 import { audioUnlockPanel } from '../shared/avatar-ui.mjs'
@@ -53,10 +53,10 @@ export function mountDuet(ctx) {
   const pageError = event => diagnostic({ event: 'browser.error', message: String(event.message || event.reason?.message || event.reason), stack: event.error?.stack || event.reason?.stack })
   window.addEventListener('error', pageError)
   window.addEventListener('unhandledrejection', pageError)
-  const notice = (text, { upgrade = false } = {}) => {
+  const notice = (text, { upgrade = false, releaseNotes } = {}) => {
     connectionHint?.dismiss()
     if (upgrade) { ratingPanel?.dispose(); ratingPanel = null }
-    notices.show(text, { upgrade })
+    notices.show(text, { upgrade, releaseNotes })
   }
   const draw = state => {
     if (pollGeneration !== state.generation) {
@@ -196,6 +196,7 @@ export function mountDuet(ctx) {
         try {
           message = JSON.parse(event.data)
           if (resultPush.event(message)) return
+          if(message.type==='voice.policy'){receive(message);return}
           if (message.type === 'harness.rpc.request') {
             if (mode !== 'online') throw new Error('harness_rpc_requires_online')
             await rpc.execute(message)

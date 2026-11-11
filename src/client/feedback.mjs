@@ -1,5 +1,5 @@
 /** Optional, explicit rating; never opens voice or submits without a user click. */
-import { identityFetch } from './identity.mjs?v=0.2.0'
+import { identityFetch } from './identity.mjs?v=0.2.1'
 
 export function mountRating(anchor, sessionTicket, {origin='page'} = {}) {
   if(!sessionTicket)return null

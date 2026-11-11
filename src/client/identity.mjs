@@ -1,5 +1,5 @@
 import { IDENTITY_HEADER, IDENTITY_TRANSPORT_HEADER, IDENTITY_TRANSPORT, IDENTITY_STORAGE,
-  VOICE_PROTOCOL, IDENTITY_PROTOCOL_PREFIX, validIdentityToken } from '../shared/identity.mjs?v=0.2.0'
+  VOICE_PROTOCOL, IDENTITY_PROTOCOL_PREFIX, validIdentityToken } from '../shared/identity.mjs?v=0.2.1'
 
 /** Desktop strips plugin cookies. Keep the Host-signed value in its origin storage. */
 export function createIdentityClient(globals = globalThis) {
@@ -10,7 +10,7 @@ export function createIdentityClient(globals = globalThis) {
   }
   async function fetchIdentity(path, options = {}) {
     if (!desktop()) return globals.fetch(path, options)
-    if (!['/duplex-control/api/voice/config', '/duplex-control/api/feedback', '/duplex-control/api/duet/nickname', '/duplex-control/api/avatar/activity'].includes(path)) {
+    if (!['/duplex-control/api/voice/config', '/duplex-control/api/voices', '/duplex-control/api/feedback', '/duplex-control/api/duet/nickname', '/duplex-control/api/avatar/activity'].includes(path)) {
       return globals.fetch(path, options)
     }
     const config = path.endsWith('/voice/config') && (!options.method || options.method === 'GET')

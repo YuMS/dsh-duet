@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.2.0'
+export const PLUGIN_VERSION = '0.2.1'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
@@ -75,12 +75,22 @@ export class DuetState {
   }
 
   receive(event) {
-    if (event.type === 'compatibility') {
+    if(event.type==='voice.unavailable'&&event.selected==='default'){
+      const message={voice_disabled:'此音色已被服务端停用，已切换为默认音色。',
+        voice_audio_missing:'参考音频已丢失，已使用默认音色。请到设置中重新上传原音频。',
+        voice_not_found:'此音色已不存在，已使用默认音色。请到设置中重新新增音色。'}[event.code]
+      if(message){this.notice(message);if(event.reconnect_required===true&&this.mode!=='off')void this.replaceConnection({reason:'voice_unavailable'})}
+    }else if(event.type==='voice.policy'&&event.enabled===false&&event.selected==='default'){
+      this.notice('自定义音色暂不可用，已切换为默认音色。')
+      if(event.reconnect_required===true&&this.mode!=='off')void this.replaceConnection({reason:'voice_policy_changed'})
+    } else if (event.type === 'compatibility') {
       const recommended = safeVersion(event.compatibility?.recommended_client_version)
       const newer = recommended && recommended.split('.').reduce((result, v, i) => result || Math.sign(Number(v) - Number(PLUGIN_VERSION.split('.')[i])), 0) > 0
       if (newer && this.recommendationShown !== recommended) {
         this.recommendationShown = recommended
-        this.notice(`当前插件 ${PLUGIN_VERSION}，推荐更新到 ${recommended}。当前连接可以继续使用。`, { upgrade: true })
+        this.notice(`当前插件 ${PLUGIN_VERSION}，推荐更新到 ${recommended}。当前连接可以继续使用。`, {
+          upgrade: true, releaseNotes: event.compatibility?.recommended_release_notes,
+        })
       }
     } else if (event.type === 'ready') {
       this.ready = true
@@ -103,7 +113,8 @@ export class DuetState {
   fail(code, details = {}) {
     const compatibility = compatibilityNotice(code, details, this.mode)
     if (compatibility) {
-      this.notice(compatibility, { upgrade: code !== 'client_version_unsupported' })
+      this.notice(compatibility, { upgrade: code !== 'client_version_unsupported',
+        releaseNotes: details.compatibility?.recommended_release_notes || details.policy?.recommended_release_notes })
       void this.setMode('off', {reason:'error',code})
       return
     }

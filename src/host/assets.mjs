@@ -15,6 +15,7 @@ const modules = {
   connection_hint: 'client/connection-hint',
   controls_layout: 'client/controls-layout',
   notice: 'client/notice',
+  voices: 'client/voices',
   workspaces: 'client/workspaces',
   transport: 'client/transport',
   identity: 'client/identity', identity_protocol: 'shared/identity',

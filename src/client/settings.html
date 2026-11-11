@@ -98,6 +98,48 @@
     <p id="nicknameStatus" class="muted" role="status" aria-live="polite"></p>
   </section>
   <section class="panel" style="margin-bottom:18px">
+    <h2>音色</h2>
+    <div id="duetVoices">
+      <p data-availability role="status" hidden></p>
+      <label for="duetVoiceChoice">选择音色</label>
+      <select id="duetVoiceChoice" data-choice disabled><option value="default">默认音色</option></select>
+      <p class="section-note">选择后，下次开启语音时生效。最多添加 5 个自定义音色。</p>
+      <button data-remove type="button" class="secondary" hidden>移除此音色</button>
+      <div data-recovery hidden>
+        <p data-voice-issue role="status"></p>
+        <div data-reupload-fields hidden>
+          <p class="muted">可使用本机保存的原音频重新上传；如果本机文件也已丢失，请重新选择最初上传的同一份文件。恢复不会重新识别或更改你修正过的文字。</p>
+          <input data-reupload-file type="file" accept="audio/wav,audio/mpeg,audio/mp4,.m4a">
+          <button data-reupload type="button">重新上传并恢复音色</button>
+        </div>
+        <button data-recovery-back type="button" class="secondary">返回</button>
+        <button data-recovery-remove type="button" class="secondary">移除此音色</button>
+      </div>
+      <div data-create hidden style="margin-top:16px;padding-top:16px;border-top:1px solid #334266">
+        <h3 style="margin-top:0;font-size:14px">新增音色</h3>
+        <div data-upload-fields>
+          <p class="section-note">上传一段 3–15 秒、清晰无背景音乐的 WAV、MP3 或 M4A，不超过 10 MB。</p>
+          <label>音色名称<input data-name maxlength="40" placeholder="例如：我的声音"></label>
+          <label>参考音频<input data-file type="file" accept="audio/wav,audio/mpeg,audio/mp4,.wav,.mp3,.m4a"></label>
+          <label><input data-consent type="checkbox" style="width:auto"> 我有权使用该音频，并同意上传用于识别和音色合成。</label>
+          <button data-upload type="button">上传并自动识别</button>
+        </div>
+        <div data-editor hidden>
+          <p data-uploaded-name></p>
+          <label for="duetVoiceTranscript">音频中说的话</label>
+          <p id="duetVoiceTextHelp" class="section-note">上传的音频中说了什么文本，如果自动识别有误请修改准确，否则影响合成效果。</p>
+          <textarea id="duetVoiceTranscript" data-text maxlength="400" rows="3" aria-describedby="duetVoiceTextHelp" placeholder="请填写上传音频中说的完整原话"></textarea>
+          <p data-recognition role="status" aria-live="polite" class="muted"></p>
+          <button data-refresh type="button" class="secondary" hidden>刷新识别结果</button>
+          <button data-save type="button">保存并使用此音色</button>
+          <button data-remove-draft type="button" class="secondary" style="margin-top:8px">移除此音色</button>
+        </div>
+        <button data-cancel type="button" class="secondary" style="margin-top:8px">取消</button>
+      </div>
+      <p data-status role="status" aria-live="polite"></p>
+    </div>
+  </section>
+  <section class="panel" style="margin-bottom:18px">
     <h2>3D 形象</h2>
     <label><input id="avatarEnabled" type="checkbox" style="width:auto"> 打开3D形象（实验）</label>
     <label><input id="avatarWebOnly" type="checkbox" style="width:auto"> 仅在网页端显示（适用于dsh装在服务器）</label>
@@ -202,7 +244,11 @@
     if(enabled||await avatarConfirm.ask())avatarSave({enabled});
   };
   window.addEventListener('pagehide',()=>{avatarConfirm.dispose();avatarChannel?.close();window.removeEventListener('storage',avatarStorage);},{once:true});
-  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.2.0';
+  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.2.1';
+  import('/duet/assets/client/voices.mjs').then(({mountVoices})=>{
+    const disposeVoices=mountVoices(document.getElementById('duetVoices'));
+    window.addEventListener('pagehide',disposeVoices,{once:true});
+  }).catch(()=>{document.querySelector('#duetVoices [data-status]').textContent='音色设置暂不可用，请刷新后重试。';});
   const base = "/duplex-control/api";
   let debugEnabled = false, settingsRevision = null, feedbackSubmitting = false;
   let nicknameDirty = false, nicknameRevision = null;
@@ -437,7 +483,7 @@
   }
   $('openTutorial').onclick = async () => {
     try {
-      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.2.0');
+      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.2.1');
       requestTutorial(localStorage);
       $('tutorialStatus').textContent = '请回到 DSH 页面继续教学。';
     } catch { $('tutorialStatus').textContent = '暂时无法打开教学，请允许浏览器存储后重试。'; }
@@ -446,11 +492,11 @@
   setInterval(() => { loadDuetConfig().catch(showConnectionUnavailable); }, 2000);
   void loadNotices();
   setInterval(loadNotices, 60000);
-  import('/duet/assets/client/shortcuts.mjs?v=0.2.0').then(({mountShortcutSettings}) => {
+  import('/duet/assets/client/shortcuts.mjs?v=0.2.1').then(({mountShortcutSettings}) => {
     const dispose = mountShortcutSettings({speaker:$('speakerShortcut'),mic:$('micShortcut'),clearSpeaker:$('clearSpeakerShortcut'),clearMic:$('clearMicShortcut'),status:$('shortcutStatus')});
     window.addEventListener('pagehide', e => {if(!e.persisted)dispose()}, {once:true});
   }).catch(() => { $('shortcutStatus').textContent = '暂时无法加载快捷键设置，请刷新重试。'; });
-  import('/duet/assets/client/microphone.mjs?v=0.2.0').then(({mountMicrophoneSettings}) => {
+  import('/duet/assets/client/microphone.mjs?v=0.2.1').then(({mountMicrophoneSettings}) => {
     const dispose = mountMicrophoneSettings({select:$('microphoneDevice'),refresh:$('refreshMicrophones'),status:$('microphoneStatus')});
     window.addEventListener('pagehide', dispose, {once:true});
   }).catch(() => { $('microphoneStatus').textContent = '暂时无法加载麦克风设置，请刷新重试。'; });

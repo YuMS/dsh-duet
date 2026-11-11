@@ -91,6 +91,8 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           const timer = setTimeout(() => { void trace.close() }, 1500); timer.unref()
         })
         let back, feedbackTicket = null, connectionRoute, selectedConfig, diagnostics
+        let chosenVoice = 'default'
+        let voiceChallengeStarted = false
         const opening = new AbortController()
         front.once('close', () => feedback?.close(feedbackTicket))
         let state = null
@@ -135,7 +137,9 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           if (!binary) {
             const message = JSON.parse(data.toString())
             if (message.type === 'session.update') data = JSON.stringify({...message,
-              client: {...message.client, connection_route: connectionRoute}})
+              session: {...message.session, ...(chosenVoice!=='default'?{voice_id:chosenVoice}:{})},
+              client: {...message.client, connection_route: connectionRoute,
+                ...(chosenVoice!=='default'?{voice_possession_protocol:'voice_possession_v1'}:{})}})
           }
           trace.frame('upstream.send', data, binary)
           back.send(data, {binary})
@@ -218,6 +222,8 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           } catch (error) { fail(error.message || 'invalid_voice_event') }
         })
         void (async () => {
+        chosenVoice = await config.prepareVoice?.() || 'default'
+        if (opening.signal.aborted || front.readyState !== WebSocket.OPEN) return
         const routes = await discovery.plan(mode)
         const selected = await connectEndpoint(WebSocket, routes, {signal: opening.signal, trace})
         if (opening.signal.aborted || front.readyState !== WebSocket.OPEN) { selected.socket.close(); return }
@@ -231,6 +237,27 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           if (!binary) {
             try {
               const offer = JSON.parse(data.toString())
+              if(offer.type==='voice.unavailable'&&offer.selected==='default'){
+                chosenVoice='default'
+                Promise.resolve(config.applyVoiceIssue?.(offer)).catch(()=>{
+                  trace.event('voice.issue_persist_failed',{code:'voice_links_unavailable'})
+                })
+              }
+              if(offer.type==='voice.policy'&&offer.enabled===false&&offer.selected==='default'){
+                chosenVoice='default'
+                // Queue persistence before forwarding: the reconnect waits for it.
+                Promise.resolve(config.applyVoicePolicy?.(offer)).catch(()=>{
+                  trace.event('voice.policy_persist_failed', {code:'voice_links_unavailable'})
+                })
+              }
+              if (offer.type === 'voice.challenge') {
+                if(chosenVoice==='default'||voiceChallengeStarted||!config.respondVoiceChallenge){fail('voice_proof_invalid');return}
+                voiceChallengeStarted=true
+                Promise.resolve(config.respondVoiceChallenge(offer.challenge)).then(proof=>{
+                  if(!terminal&&back.readyState===WebSocket.OPEN)back.send(JSON.stringify({type:'voice.proof',...proof}))
+                }).catch(()=>fail('voice_proof_invalid'))
+                return // Original-file proof and nonce never enter browser/trace.
+              }
               if (offer.type === 'client.diagnostics.ready') {
                 diagnostics.offer(offer, selectedConfig, selected.route.url)
                 return
