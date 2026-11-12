@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "duet-guard — DSH Duet 连接守护",
+  "version": "2.0.0",
+  "description": "DSH Duet 断连侦测与自动重连兜底（每 5 秒扫描）",
+  "content_scripts": [
+    {
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "js": ["guard.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
