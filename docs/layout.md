@@ -10,6 +10,7 @@
 | `assets/avatar/` | 形象渲染包与角色资源 |
 | `assets/avatar/desktop/` | 随插件分发的桌面前端及校验清单，不嵌入原生外壳 |
 | `config/` | DSH bundle 声明 |
+| `vendor/dsh-duet-superagent/` | 代理模式的任务引擎；由 Git 子模块锁定版本 |
 | `assets/tutorial-audio/` | 教学音频与校验清单 |
 | `tests/unit/` | 模块单元测试 |
 | `tests/browser/` | 设置、教学和反馈的浏览器测试 |
@@ -18,6 +19,8 @@
 
 公开入口由 `package.json` 的 `exports` 和 `dsh.bundle` 指定，不依赖根目录文件名。
 形象的使用与构建见 [avatar.md](avatar.md)。
+
+开发时使用 `git clone --recurse-submodules`；已有检出运行 `git submodule update --init`。
 
 客户端入口独立提供加载失败提示：浏览器模块、依赖或初始化失败时，在侧栏显示刷新页面及
 更新后重启 DSH 的建议；不依赖其他客户端模块，不自动重启 DSH，也不把所有失败归因为版本问题。
