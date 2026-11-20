@@ -1,5 +1,5 @@
 /** Desired voice mode is independent of a temporarily suspended connection. */
-export const PLUGIN_VERSION = '0.2.1'
+export const PLUGIN_VERSION = '0.3.0'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
@@ -96,7 +96,8 @@ export class DuetState {
       this.ready = true
       this.connection?.sendState(this.state)
       this.flush()
-    } else if (event.type === 'external_message.done') {
+    } else if (event.type === 'external_message.done' ||
+        (event.type === 'external_message.accepted' && this.connection?.ordinaryOnlineResults)) {
       this.pending.delete(event.message_id)
       this.sent.delete(event.message_id)
       this.flush()
@@ -111,6 +112,13 @@ export class DuetState {
   }
 
   fail(code, details = {}) {
+    if(code==='agent_mode_disabled'){
+      this.notice('当前语音服务仅支持输入模式。');void this.setMode('off',{reason:'error',code});return
+    }
+    if (code === 'duet_agent_backend_upgrade_required' || code === 'duet_agent_unavailable') {
+      this.notice('代理模式暂不可用，请检查任务模块与语音服务配置，或在设置中切回输入模式。')
+      void this.setMode('off', {reason:'error',code}); return
+    }
     const compatibility = compatibilityNotice(code, details, this.mode)
     if (compatibility) {
       this.notice(compatibility, { upgrade: code !== 'client_version_unsupported',
@@ -119,6 +127,11 @@ export class DuetState {
       return
     }
     const policyNotices = {
+      work_mode_choice_required:'请先选择输入模式或代理模式。',
+      agent_permission_required:'请先在设置中同意代理模式的权限。',
+      work_mode_protocol_mismatch:'语音服务与当前工作方式不匹配，请重新连接或在设置中切换工作方式。',
+      duet_agent_workspace_in_use:'这个工作区已有代理语音连接，请先关闭另一处连接。',
+      workspace_selection_required:'请在设置中选择代理工作区。',
       workspace_required: '请先在 DSH 中创建 workspace，再开启 duet。',
       workspace_loading: '正在加载 workspace，请稍后再试。',
       workspace_unavailable: '无法读取 workspace，请刷新 DSH 后重试。',
@@ -152,7 +165,7 @@ export class DuetState {
       this.state = state
       if (this.ready) this.connection?.sendState(state)
     }
-    if (this.mode === 'tts_only') {
+    if (this.mode === 'tts_only' || this.connection?.ordinaryOnlineResults) {
       for (const result of results) {
         if (this.pending.size >= 64) { this.fail('external_message_queue_full'); break }
         this.pending.set(result.message_id, result)
@@ -168,7 +181,7 @@ export class DuetState {
   }
 
   flush() {
-    if (!this.ready || this.mode !== 'tts_only') return
+    if (!this.ready || (this.mode !== 'tts_only' && !this.connection?.ordinaryOnlineResults)) return
     // One notification at a time; preserve the next one until generation finishes.
     if (this.sent.size) return
     const result = this.pending.values().next().value

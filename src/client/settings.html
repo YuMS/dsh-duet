@@ -90,6 +90,12 @@
     </details>
   </section>
   <section class="panel" style="margin-bottom:18px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px">
+      <h2 style="margin:0">工作方式</h2>
+    </div>
+    <div id="workModeSettings">正在读取工作方式…</div>
+  </section>
+  <section class="panel" style="margin-bottom:18px">
     <h2>助手昵称</h2>
     <label for="assistantNickname">给助手起个名字</label>
     <input id="assistantNickname" type="text" placeholder="duet" autocomplete="off">
@@ -244,7 +250,14 @@
     if(enabled||await avatarConfirm.ask())avatarSave({enabled});
   };
   window.addEventListener('pagehide',()=>{avatarConfirm.dispose();avatarChannel?.close();window.removeEventListener('storage',avatarStorage);},{once:true});
-  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.2.1';
+  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.3.0';
+  import { mountWorkMode, workModeOnboarding } from '/duet/assets/client/work-mode.mjs';
+  const modePreview=workModeOnboarding(undefined,{preview:true});
+  let previewRequested=new URL(location.href).searchParams.get('preview')==='work-mode';
+  window.addEventListener('pagehide',()=>modePreview.dispose(),{once:true});
+  void mountWorkMode(document.getElementById('workModeSettings'),{saved:()=>void loadDuetConfig(true).catch(()=>{})}).catch(()=>{
+    document.getElementById('workModeSettings').textContent='暂时无法读取工作方式，请刷新重试。';
+  });
   import('/duet/assets/client/voices.mjs').then(({mountVoices})=>{
     const disposeVoices=mountVoices(document.getElementById('duetVoices'));
     window.addEventListener('pagehide',disposeVoices,{once:true});
@@ -389,6 +402,8 @@
   async function refresh() { try { await Promise.all([loadSessions(), loadJobs()]); } catch (error) { showMessage(error.message, true); } }
   async function loadDuetConfig(fill = false) {
     const config = await api('/voice/config');
+    if(previewRequested&&(!config.work_mode_policy||config.work_mode_policy==='recommend_agent'))void modePreview.show();
+    previewRequested=false;
     $('avatarWebOnly').disabled = config.avatar?.web_only === true;
     if (config.avatar?.web_only) $('avatarWebOnly').checked = true;
     showConnectionStatus(config);
@@ -483,7 +498,7 @@
   }
   $('openTutorial').onclick = async () => {
     try {
-      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.2.1');
+      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.3.0');
       requestTutorial(localStorage);
       $('tutorialStatus').textContent = '请回到 DSH 页面继续教学。';
     } catch { $('tutorialStatus').textContent = '暂时无法打开教学，请允许浏览器存储后重试。'; }
@@ -492,11 +507,11 @@
   setInterval(() => { loadDuetConfig().catch(showConnectionUnavailable); }, 2000);
   void loadNotices();
   setInterval(loadNotices, 60000);
-  import('/duet/assets/client/shortcuts.mjs?v=0.2.1').then(({mountShortcutSettings}) => {
+  import('/duet/assets/client/shortcuts.mjs?v=0.3.0').then(({mountShortcutSettings}) => {
     const dispose = mountShortcutSettings({speaker:$('speakerShortcut'),mic:$('micShortcut'),clearSpeaker:$('clearSpeakerShortcut'),clearMic:$('clearMicShortcut'),status:$('shortcutStatus')});
     window.addEventListener('pagehide', e => {if(!e.persisted)dispose()}, {once:true});
   }).catch(() => { $('shortcutStatus').textContent = '暂时无法加载快捷键设置，请刷新重试。'; });
-  import('/duet/assets/client/microphone.mjs?v=0.2.1').then(({mountMicrophoneSettings}) => {
+  import('/duet/assets/client/microphone.mjs?v=0.3.0').then(({mountMicrophoneSettings}) => {
     const dispose = mountMicrophoneSettings({select:$('microphoneDevice'),refresh:$('refreshMicrophones'),status:$('microphoneStatus')});
     window.addEventListener('pagehide', dispose, {once:true});
   }).catch(() => { $('microphoneStatus').textContent = '暂时无法加载麦克风设置，请刷新重试。'; });

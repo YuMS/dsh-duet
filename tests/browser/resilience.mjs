@@ -15,7 +15,7 @@ try {
       if(path.endsWith('/voice/diagnostic'))diagnostics.push(route.request().postDataJSON())
       if(path.endsWith('/voice/config')){configRequests++;if(configHang)return}
       if(path.endsWith('/sessions')){pollRequests++;if(pollFail)return route.fulfill({status:503,json:{}})}
-      const body=path.endsWith('/sessions')?{sessions:[]}:path.endsWith('/results')?{current_cursor:0,next_cursor:0,results:[]}:path.endsWith('/health')?{focus_epoch:'fixture'}:{}
+      const body=path.endsWith('/voice/config')?{work_mode:'direct',work_mode_choice_version:1}:path.endsWith('/sessions')?{sessions:[]}:path.endsWith('/results')?{current_cursor:0,next_cursor:0,results:[]}:path.endsWith('/health')?{focus_epoch:'fixture'}:{}
       return route.fulfill({json:body})
     }
     return route.fulfill({contentType:'text/html',body:`<div id="sidebar" style="position:absolute;bottom:20px;left:0;width:80px;overflow:hidden;transform:translateZ(0)"><span id="dsh-duet-entry"></span></div><script type="module">
@@ -31,9 +31,10 @@ try {
   const mode=()=>page.locator('#dsh-duet-controls').getAttribute('data-mode')
   const step=async ms=>{await page.clock.runFor(ms);await page.waitForTimeout(30)}
   await page.evaluate(()=>{hasWorkspace=false});await page.locator('#dsh-duet-entry').hover();await page.locator('[data-voice=speaker]').click()
-  const notice=page.locator('[data-duet-notice]');assert.match(await notice.innerText(),/创建 workspace/)
-  assert.equal(await notice.evaluate(e=>e.parentElement===document.body),true)
-  const box=await notice.boundingBox();assert.ok(box.x>=12&&box.x+box.width<=788&&box.y>=12&&box.y+box.height<=588)
+  const notice=page.locator('[data-duet-notice]')
+  await step(100)
+  assert.equal(await mode(),'tts_only','input mode supports Ungrouped without registered workspaces')
+  await page.locator('[data-voice=speaker]').click();await step(100)
   await page.evaluate(()=>{hasWorkspace=true})
   const beforeIdle=pollRequests;for(let i=0;i<10;i++)await step(1000)
   assert.ok(pollRequests-beforeIdle<=3,'off mode should poll at most every 5 seconds')

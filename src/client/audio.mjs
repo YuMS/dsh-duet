@@ -1,4 +1,4 @@
-import { microphoneConstraints } from './microphone.mjs?v=0.2.1'
+import { microphoneConstraints } from './microphone.mjs?v=0.3.0'
 import { captionCue, captionAt, AudioCaptionTimeline } from '../shared/avatar.mjs'
 
 export const AUDIO_STOP_PROTOCOL = 'audio_stop_candidates_v1'
@@ -17,6 +17,7 @@ export class DuetAudio {
     this.tones = new Set()
     this.captureCleanup = null
     this.captionTimeline = new AudioCaptionTimeline()
+    this.spokenSegments = new Map()
   }
 
   prepare() {
@@ -103,6 +104,14 @@ export class DuetAudio {
 
   event(event, send, present = () => {}) {
     const key = `${event.response_id}:${event.generation}`
+    const segmentKey=JSON.stringify([event.response_id,event.segment_id??0])
+    // Legacy workers send spoken deltas without timestamps or generation, while
+    // the paired PCM has a generation but sometimes no text. Join by response/segment.
+    if(event.response_id && event.type==='response.output_text.delta' &&
+       !Object.hasOwn(event,'audio_sample_end') && typeof event.delta==='string'){
+      this.spokenSegments.set(segmentKey,((this.spokenSegments.get(segmentKey)||'')+event.delta).slice(0,4000))
+      if(this.spokenSegments.size>48)this.spokenSegments.delete(this.spokenSegments.keys().next().value)
+    }
     if (['response.output_text.delta','response.output_text.done'].includes(event.type)
         && Object.hasOwn(event,'audio_sample_end')) {
       if (this.cleared.has(key)) return true
@@ -137,7 +146,15 @@ export class DuetAudio {
     this.nextTime = start + pcm.length / rate
     const response = this.responses.get(key) || { response_id: event.response_id, generation: event.generation, played: 0, basePlayed: 0, received: 0, chunks: [] }
     const chunk = { start, samples: pcm.length, rate, sampleStart: response.received, node, gain, ended: false }
-    chunk.caption = captionCue(response, event)
+    let spoken=event.text
+    if(!spoken && this.spokenSegments.has(segmentKey)){
+      // Approximate only when no TTS cue is available. Do not reveal a long
+      // generated sentence in the first 80ms of playback.
+      if(response.legacySegment!==segmentKey){response.legacySegment=segmentKey;response.legacySeconds=0}
+      response.legacySeconds+=pcm.length/rate
+      spoken=Array.from(this.spokenSegments.get(segmentKey)).slice(0,Math.ceil(response.legacySeconds*7)).join('')
+    }
+    chunk.caption = captionCue(response, spoken===event.text?event:{...event,text:spoken})
     response.received += pcm.length
     response.chunks.push(chunk)
     this.responses.set(key, response)
@@ -146,7 +163,9 @@ export class DuetAudio {
       const until = Math.min(this.context.currentTime, response.stopAt ?? Infinity)
       if (until > chunk.start) {
         const played=this.playedAt(response,until)
-        this.avatarCaption = { text: this.captionTimeline.text(key,played) ?? captionAt(chunk.caption, (until-chunk.start)*rate/pcm.length), at: performance.now(), key, played }
+        const final=response.done && !response.stopping && !this.cleared.has(key) && played>=response.received
+          ? this.spokenSegments.get(response.legacySegment)?.slice(-240) : null
+        this.avatarCaption = { text: this.captionTimeline.text(key,played) ?? final ?? captionAt(chunk.caption, (until-chunk.start)*rate/pcm.length), at: performance.now(), key, played }
       }
       chunk.ended = true
       this.nodes.delete(node); node.disconnect(); gain.disconnect()
@@ -174,7 +193,13 @@ export class DuetAudio {
       while (!r.stopping && r.chunks.length && this.context.currentTime >= r.chunks[0].start + r.chunks[0].samples / r.chunks[0].rate) {
         r.basePlayed += r.chunks.shift().samples
       }
-      if (r.done && !r.stopping && !r.chunks.length) this.responses.delete(key)
+      if (r.done && !r.stopping && !r.chunks.length) {
+        const final=this.spokenSegments.get(r.legacySegment)
+        if(final && this.avatarCaption?.key===key && this.captionTimeline.text(key,played)==null){
+          this.avatarCaption.text=final.slice(-240);this.avatarCaption.at=performance.now()
+        }
+        this.responses.delete(key)
+      }
     }
   }
 
@@ -288,6 +313,7 @@ export class DuetAudio {
     this.nextTime = 0
     this.avatarCaption = null
     this.captionTimeline.clear()
+    this.spokenSegments.clear()
   }
 
   stop() {

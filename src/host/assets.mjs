@@ -17,6 +17,7 @@ const modules = {
   notice: 'client/notice',
   voices: 'client/voices',
   workspaces: 'client/workspaces',
+  work_mode: 'client/work-mode', work_mode_protocol:'shared/work-mode',
   transport: 'client/transport',
   identity: 'client/identity', identity_protocol: 'shared/identity',
   avatar: 'client/avatar', avatar_protocol: 'shared/avatar',
@@ -24,6 +25,7 @@ const modules = {
   avatar_ui: 'shared/avatar-ui',
   avatar_menu: 'shared/avatar-menu', avatar_menu_ui: 'shared/avatar-menu-ui',
   avatar_tasks: 'client/avatar-tasks',
+  agent_tasks: 'client/agent-tasks',
   avatar_surface: 'shared/avatar-surface', avatar_surfaces: 'client/avatar-surfaces',
   input_effect: 'client/input-effect',
 }

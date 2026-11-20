@@ -1,14 +1,18 @@
 /** duet Host entry: session operations, authenticated settings, and client assets. */
 
-import { readFile } from 'node:fs/promises'
+import { readFile, mkdir, realpath } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { registerDuetProxy, duetConfig } from './proxy.mjs'
 import { DuetSettings, settingsWriteAllowed } from './settings.mjs'
 import { NICKNAME_LIMIT } from '../shared/nickname.mjs'
 import { IDENTITY_TRANSPORT_HEADER, IDENTITY_TRANSPORT } from '../shared/identity.mjs'
 import { ServiceNotices } from './notices.mjs'
-import { ServiceInfo } from './service-info.mjs'
+import { ServiceInfo,WorkModePolicy } from './service-info.mjs'
+import {effectiveWorkPolicy} from '../shared/work-mode.mjs'
 import { DuetTrace } from './trace.mjs'
+import { diagnosticPayload } from '../shared/diagnostics.mjs'
 import { FeedbackService } from './feedback-store.mjs'
 import { RemoteFeedback } from './feedback-files.mjs'
 import { PLUGIN_VERSION } from '../shared/state.mjs'
@@ -162,6 +166,34 @@ import { ResultFeed } from './result-feed.mjs'
 import { registerSyncFeed } from './sync-feed.mjs'
 
 export function apply(ctx, options = {}) {
+  let creatingWorkspace
+  const dedicatedDir=()=>join(homedir(),'DSH-workspaces','dsh-duet')
+  async function registeredDedicated(rows){
+    // Runtime and task history use the canonical directory as their identity.
+    for(const name of ['dsh-duet','duet']){
+      const dir=join(homedir(),'DSH-workspaces',name)
+      const canonical=await realpath(dir).catch(()=>dir)
+      const row=rows.find(w=>w.path===canonical)
+      if(row)return row
+    }
+  }
+  async function dedicatedWorkspace() {
+    const existing=await registeredDedicated(ctx.workspaceRegistry.list())
+    if(existing){
+      let name=existing.title||existing.name
+      if(name==='duet' && ctx.workspaceController.rename){
+        await ctx.workspaceController.rename({workspaceId:existing.id,title:'dsh-duet'})
+        name='dsh-duet'
+      }
+      return {id:existing.id,name:name||'dsh-duet'}
+    }
+    const path = dedicatedDir()
+    await mkdir(path,{recursive:true, mode:0o700})
+    const canonical = await realpath(path)
+    const result = await ctx.workspaceController.create({path:canonical})
+    if(!result?.workspace?.workspaceId) throw Error('workspace_creation_failed')
+    return {id:result.workspace.workspaceId,name:result.workspace.title||result.workspace.name||'dsh-duet'}
+  }
   const resultFeed = new ResultFeed()
   ctx.effect(() => () => resultFeed.notify())
   const jobs = new Map()
@@ -192,11 +224,16 @@ export function apply(ctx, options = {}) {
   ctx.effect(() => { const avatar=registerAvatarHost(ctx);return ()=>avatar.close() })
   Object.assign(voice, settings.effective())
   voice.nickname = () => settings.public().nickname
+  voice.workMode = () => settings.public().work_mode
+  voice.workPolicy = () => effectiveWorkPolicy(settings.public(),workPolicy.current)
+  voice.agentService = () => ctx.get('duetAgent')
   const audit = new DuetTrace({ kind: 'host', plugin_version: PLUGIN_VERSION, pid: process.pid },
     { ...options.traceOptions, secrets: [voice.authorization] })
   ctx.effect(() => () => { void audit.close({ reason: 'plugin_dispose' }) })
   const discovery = new EndpointDiscovery(() => settings.effective(), {...options.endpointDiscoveryOptions, changed: () => {notices.invalidate();serviceInfo.invalidate()}})
-  const voices = new DuetVoices(() => discovery.effective(), {scope:()=>settings.effective().endpoints.online,...options.voiceOptions})
+  const voiceRoot=duetEnv('VOICE_LIBRARY_DIR')
+  const voices = new DuetVoices(() => discovery.effective(), {scope:()=>settings.effective().endpoints.online,
+    ...(voiceRoot?{root:voiceRoot}:{}),...options.voiceOptions})
   voice.prepareVoice = () => voices.prepare()
   voice.respondVoiceChallenge = challenge => voices.respondChallenge(challenge)
   voice.applyVoicePolicy = policy => voices.applyPolicy(policy)
@@ -204,13 +241,14 @@ export function apply(ctx, options = {}) {
   ctx.effect(() => () => voices.close())
   const notices = new ServiceNotices(() => discovery.effective(), (url,options) => discovery.fetch(url,options))
   const serviceInfo = new ServiceInfo(() => discovery.effective(), (url,options) => discovery.fetch(url,options))
+  const workPolicy = new WorkModePolicy(()=>discovery.effective(),(url,options)=>discovery.fetch(url,options))
   discovery.refreshIfDue()
   const feedbackStore = options.feedbackStore ?? (options.feedbackDisabled ? null : new RemoteFeedback(()=>discovery.effective(),{keyPath:options.feedbackIdentityPath}))
   const feedback = new FeedbackService(feedbackStore)
   const avatarActivity = new AvatarActivityOutbox(()=>discovery.effective(), options.avatarActivityOptions)
   ctx.effect(()=>()=>avatarActivity.close())
   let duetProxy
-  ctx.effect(() => { duetProxy = registerDuetProxy(ctx, voice, feedback, () => (ctx.workspaceRegistry.list?.() || []).length > 0, discovery); return duetProxy })
+  ctx.effect(() => { duetProxy = registerDuetProxy(ctx, voice, feedback, () => true, discovery); return duetProxy })
 
   ctx.effect(() => () => { hostAbort.abort() })
 
@@ -335,7 +373,8 @@ export function apply(ctx, options = {}) {
 
   const listSessions = async ({forCatalog = false} = {}) => {
     const { items } = await ctx.sessionController.list({}, hostAbort.signal)
-    const catalog = buildSessionCatalog(items, {
+    const managed = new Set(await ctx.get?.('duetAgent')?.managedSessionIds?.() || [])
+    const catalog = buildSessionCatalog(items.filter(item=>!managed.has(item.sessionId)), {
       archivedIds: ctx.workspaceRegistry.archivedSessionIds,
       workspaces: ctx.workspaceRegistry.list?.() || [],
       activeId: activeSessionId,
@@ -603,11 +642,44 @@ export function apply(ctx, options = {}) {
       const body = await readJson(req)
       if (JSON.stringify(body).length > 24000) { sendError(res, 413, 'diagnostic too large'); return }
       audit.event('client.diagnostic', body)
-      try { duetProxy?.reportDiagnostic?.(req, body) } catch { /* Best effort only. */ }
-      sendJson(res, 200, { ok: true, logging: audit.snapshot() }); return
+      if (!diagnosticPayload(body)) {
+        sendJson(res, 200, {ok:true, delivery:'local_only', logging:audit.snapshot()}); return
+      }
+      const accepted = duetProxy?.reportDiagnostic?.(req, body) === true
+      sendJson(res, accepted ? 202 : 409, {ok:accepted, delivery:accepted ? 'accepted' : 'not_queued'}); return
     }
     if (req.method === 'GET' && pathname === `${ROUTE}/api/voice/service-info`) {
       sendJson(res, 200, await serviceInfo.get())
+      return
+    }
+    if (req.method === 'POST' && pathname === `${ROUTE}/api/voice/dedicated-workspace`) {
+      const rejection=ctx.connection.requestRejection(req)
+      if(rejection || !identityWriteAllowed(req)){sendError(res,rejection||403,'DSH connection required');return}
+      if(await workPolicy.get()==='direct_only'){sendError(res,403,'agent_mode_disabled');return}
+      try {
+        creatingWorkspace ??= dedicatedWorkspace().finally(()=>{creatingWorkspace=null})
+        sendJson(res,200,await creatingWorkspace)
+      } catch {sendError(res,503,'无法使用 dsh-duet 专属工作区，可以选择已有工作区。')}
+      return
+    }
+    if (req.method === 'GET' && pathname === `${ROUTE}/api/voice/work-options`) {
+      const models = await ctx.sessionController.modelCatalog()
+      const rows=ctx.workspaceRegistry.list()
+      sendJson(res, 200, {dedicated_workspace_id:(await registeredDedicated(rows))?.id??null,
+        workspaces:rows.map(w=>({id:w.id,path:w.path,name:w.title||w.name})),
+        models:{default:models.default,groups:models.groups}})
+      return
+    }
+    if(req.method==='GET' && pathname===`${ROUTE}/api/voice/agent-tasks`){
+      const rejection=ctx.connection.requestRejection(req)
+      if(rejection){sendError(res,rejection,'DSH connection required');return}
+      const policy=effectiveWorkPolicy(settings.public(),await workPolicy.get())
+      if(policy.work_mode!=='agent'||policy.agent_permission_version!==1){sendJson(res,200,{rows:[]});return}
+      try{
+        const rows=await ctx.get('duetAgent').taskRows(policy.agent_options.workspace_id)
+        sendJson(res,200,{rows:rows.map(({name,state,session_id,finished_at})=>({name,state,
+          ...(/^worker-[a-f0-9]{32}$/.test(session_id)?{session_id,finished_at}:{} )}))})
+      }catch{sendError(res,503,'任务状态暂不可用')}
       return
     }
     if (req.method === 'GET' && pathname === `${ROUTE}/api/voice/config`) {
@@ -616,7 +688,7 @@ export function apply(ctx, options = {}) {
         if(req.headers[IDENTITY_TRANSPORT_HEADER.toLowerCase()]===IDENTITY_TRANSPORT)identity=feedbackStore?.ensureCredential?.(req,res)
         else feedbackStore?.ensureIdentity?.(req,res)
       } catch {sendJson(res,503,{error_code:'feedback_identity_unavailable'});return}
-      sendJson(res, 200, { ...settings.public(), plugin_version: PLUGIN_VERSION, feedback_enabled: feedback.enabled,
+      sendJson(res, 200, { ...effectiveWorkPolicy(settings.public(),await workPolicy.get()), plugin_version: PLUGIN_VERSION, feedback_enabled: feedback.enabled,
         avatar: { web_only: duetEnv('AVATAR_WEB_ONLY') === '1' },
         ...(identity?{feedback_identity:identity}:{}), connection: duetProxy?.snapshot?.() || { online: 0, tts_only: 0 } })
       return
@@ -624,7 +696,17 @@ export function apply(ctx, options = {}) {
     if (req.method === 'PUT' && pathname === `${ROUTE}/api/voice/config`) {
       if (!identityWriteAllowed(req)) { sendError(res, 403, 'same-origin settings request required'); return }
       try {
-        const result = await settings.save(await readJson(req))
+        const input = await readJson(req)
+        const rule=await workPolicy.get()
+        if(rule==='direct_only' && input.work_mode==='agent'){sendError(res,403,'agent_mode_disabled');return}
+        if ((input.work_mode ?? effectiveWorkPolicy(settings.public(),rule).work_mode) === 'agent') {
+          const options=input.agent_options || settings.public().agent_options
+          if (!ctx.workspaceRegistry.list().some(w=>w.id===options?.workspace_id)) throw Error('workspace_selection_required')
+          const service=ctx.get('duetAgent')
+          if(!service?.validateConfiguration)throw Error('duet_agent_unavailable')
+          await service.validateConfiguration(options)
+        }
+        const result = await settings.save(input)
         Object.assign(voice, settings.effective())
         discovery.invalidate()
         feedback.sessions.clear() // Never send an old rating to a newly selected backend.
@@ -632,7 +714,7 @@ export function apply(ctx, options = {}) {
         notices.invalidate()
         serviceInfo.invalidate()
         duetProxy?.closeConnections?.('voice_settings_changed')
-        sendJson(res, 200, result)
+        sendJson(res, 200, effectiveWorkPolicy(result,await workPolicy.get()))
       } catch (error) { sendError(res, 400, error.message) }
       return
     }
@@ -1230,7 +1312,7 @@ export function apply(ctx, options = {}) {
   const handler = async (req, res) => {
     const pathname = new URL(req.url || '/', 'http://localhost').pathname
     try {
-      if ([PAGE_ROUTE, `${PAGE_ROUTE}/`, ROUTE, `${ROUTE}/`, `${ROUTE}/api/voice/config`, `${ROUTE}/api/voice/service-info`, `${ROUTE}/api/voice/diagnostic`, `${ROUTE}/api/announcements`].includes(pathname)) {
+      if ([PAGE_ROUTE, `${PAGE_ROUTE}/`, ROUTE, `${ROUTE}/`, `${ROUTE}/api/voice/config`, `${ROUTE}/api/voice/work-options`, `${ROUTE}/api/voice/service-info`, `${ROUTE}/api/voice/diagnostic`, `${ROUTE}/api/announcements`].includes(pathname)) {
         const rejection = ctx.connection.requestRejection(req)
         if (rejection) { sendError(res, rejection, '请先打开并登录 DSH 主页面'); return }
       }

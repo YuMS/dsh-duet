@@ -2,6 +2,7 @@ import {avatarLocalState,avatarMenuAction,avatarMenuResult} from './avatar-menu.
 import {sizeButton,nextAvatarSize} from './avatar-ui.mjs'
 const labels={completed:'本轮已完成',failed:'执行失败',stopped:'已停止',approval:'等待授权',question:'等待回答',plan_review:'等待方案确认'}
 const names={small:'紧凑',medium:'标准',large:'宽松'}
+export const noticeBadgeStyle='border:0;border-radius:12px;background:#dcefff;color:#185a89;font:12px system-ui;padding:4px 7px;cursor:pointer;pointer-events:auto'
 const paths={open:'M14 3h7v7m0-7L10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5',pending:'M8 4h8m-9 0H5v17h14V4h-2M8 3h8v4H8zM8 12h8m-8 4h5',bubble:'M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-3H3V6a2 2 0 0 1 2-2zM7 9h10m-10 4h6',tutorial:'m9 5 10 7-10 7z',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',hide:'m4 4 16 16M9 5a11 11 0 0 1 12 7l-3 4M6 6a13 13 0 0 0-5 6s4 7 11 7l3-1M10 10a3 3 0 0 0 4 4',back:'m14 5-7 7 7 7'}
 const icon=name=>{const s=document.createElementNS('http://www.w3.org/2000/svg','svg');s.setAttribute('viewBox','0 0 24 24');s.setAttribute('aria-hidden','true');s.innerHTML=`<path d="${paths[name]||paths.pending}"/>`;return s}
 export function mountAvatarMenu({anchor,viewport=()=>[0,0,innerWidth,innerHeight],send,changed=()=>{}}){
@@ -33,7 +34,8 @@ export function mountAvatarMenu({anchor,viewport=()=>[0,0,innerWidth,innerHeight
     if(paths[iconName])b.append(icon(iconName));const t=document.createElement('span');t.dataset.label='';t.textContent=label;b.append(t)
     b.onclick=()=>{if(['pending','bubble_panel','back'].includes(action)){section=action==='back'?'main':action;render();return}close();command(action,undefined,id)};return b
   }
-  const countLabel=()=>{const n=state.items.filter(i=>i.pending||i.unread).length;return '待处理事项与通知'+(n?`（${n}）`:'')}
+  const unreadCount=()=>state.items.filter(i=>i.unread).length
+  const countLabel=()=>{const n=unreadCount();return '待处理事项与通知'+(n?`（${n}）`:'')}
   const valueSpan=b=>{const v=document.createElement('span');v.dataset.value='';b.append(v);return v}
   const refreshControls=()=>{
     if(!root)return
@@ -72,8 +74,8 @@ export function mountAvatarMenu({anchor,viewport=()=>[0,0,innerWidth,innerHeight
   const keys=e=>{if(!root)return;if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();close();return}const buttons=[...root.querySelectorAll('button')],index=buttons.indexOf(document.activeElement);if(['ArrowDown','ArrowUp','Home','End','Tab'].includes(e.key)){e.preventDefault();buttons[e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+(e.key==='ArrowUp'||e.key==='Tab'&&e.shiftKey?-1:1)+buttons.length)%buttons.length]?.focus()}}
   const decorate=(node,label)=>{node.className='duet-pet-menu';node.setAttribute('aria-label',label)}
   const update=value=>{
-    state=avatarLocalState(value);badge??=document.createElement('button');badge.type='button';badge.dataset.duetNoticeBadge='';badge.style.cssText='position:fixed;z-index:2147483600;border:0;border-radius:12px;background:#dcefff;color:#185a89;font:12px system-ui;padding:4px 7px;cursor:pointer;pointer-events:auto'
-    const count=state.items.filter(i=>i.pending||i.unread).length;badge.textContent=count?String(count):'';badge.setAttribute('aria-label',countLabel());badge.hidden=!count||!state.enabled;badge.onclick=e=>open(e,'pending');if(!badge.isConnected)document.body.append(badge)
+    state=avatarLocalState(value);badge??=document.createElement('button');badge.type='button';badge.dataset.duetNoticeBadge='';badge.style.cssText='position:fixed;z-index:2147483600;'+noticeBadgeStyle
+    const count=unreadCount();badge.textContent=count?String(count):'';badge.setAttribute('aria-label',countLabel());badge.hidden=!count||!state.enabled;badge.onclick=e=>open(e,'pending');if(!badge.isConnected)document.body.append(badge)
     const a=anchor().getBoundingClientRect(),[x,y,w,h]=viewport();badge.style.left=Math.max(x+12,Math.min((a.right??a.left+a.width)-24,x+w-36))+'px';badge.style.top=Math.max(y+12,Math.min(a.top,y+h-30))+'px'
     if(toastId!==state.toast){clearTimeout(timer);clearTimeout(ackTimer);toast?.remove();toast=null;toastId=state.toast;const item=state.items.find(i=>i.id===state.toast);if(item){toast=document.createElement('section');toast.dataset.duetLocalNotice='';decorate(toast,'DSH 任务通知');const p=document.createElement('div');p.dataset.noticeTitle='';p.textContent=`${item.name||'未命名会话'} · ${labels[item.status]}`;toast.append(p,row(item.pending?'去处理':'查看','view','open',item.id),row('收起','dismiss','hide',item.id));document.body.append(toast);place(toast);if(!item.pending)timer=setTimeout(()=>{toast?.remove();toast=null;changed()},8000)}}
     refreshControls();changed()

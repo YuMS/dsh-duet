@@ -24,7 +24,7 @@ export function mountAvatar({controls, audio, state, notice, requestMode, onSurf
   const activityTimer=setInterval(()=>activity.tick(),30000)
   const pagehide=()=>{clearTimeout(activityStartTimer);activityStartTimer=null;activity.stop('pagehide')}
   window.addEventListener('pagehide',pagehide)
-  const publishPresentation=mode=>{presentationMode=mode;channel?.postMessage({type:'presentation',mode})}
+  const publishPresentation=mode=>{presentationMode=mode;channel?.postMessage({type:'presentation',mode});window.dispatchEvent(new Event('duet:avatar-presentation'))}
   const ownerKind=location.protocol==='dsh-app:'?'desktop':/Edg\//.test(navigator.userAgent)?'edge':/Firefox\//.test(navigator.userAgent)?'firefox':/Chrome\//.test(navigator.userAgent)?'chrome':/Safari\//.test(navigator.userAgent)?'safari':'browser'
   const rememberOwner=()=>{if(native&&document.visibilityState==='visible'&&document.hasFocus())send({type:'owner_focus'})}
   window.addEventListener('focus',rememberOwner)
@@ -49,6 +49,25 @@ export function mountAvatar({controls, audio, state, notice, requestMode, onSurf
     if(!root)return
     const c=controls(),r=c?.getBoundingClientRect()
     root.hidden=!r||c.dataset.compact==='true'
+    // Insert a sibling between DSH's scrollable workspace region and its footer.
+    // Never insert inside a session row or clear/reparent anything owned by DSH.
+    const list=c?.closest('[data-slot="sidebar"]')?.querySelector('[data-slot="sidebar.workspaces"]')
+    let foot=c
+    while(foot?.parentElement && list && !foot.parentElement.contains(list))foot=foot.parentElement
+    if(list && foot?.parentElement && foot!==document.body && !foot.contains(list)){
+      if(root.parentElement!==foot.parentElement||root.nextElementSibling!==foot)foot.before(root)
+      if(root.hidden){root.style.display='none';return}
+      const width=Math.max(1,Math.min(foot.parentElement.clientWidth||r.width,260))
+      const scale=Math.min(avatarScale(prefs.size),width/180,innerHeight*.32/210)
+      root.dataset.size=prefs.size
+      root.style.cssText='position:relative;flex:0 0 auto;align-self:stretch;min-width:0;display:flex;flex-direction:column;align-items:center;pointer-events:none'
+      stage.style.cssText=`position:relative;width:${width}px;max-width:100%;height:${210*scale}px`
+      caption.style.position='relative';caption.style.bottom='auto';caption.style.left='auto';caption.style.right='auto'
+      caption.style.width='calc(100% - 16px)';caption.style.maxHeight=`min(${{small:90,medium:180,large:260}[noticePreferences().bubble]}px,16vh)`
+      caption.style.order='-1';if(!caption.hidden)caption.scrollTop=caption.scrollHeight
+      root.querySelector('[data-duet-caption-tail]').style.display='none'
+      return
+    }
     if(r){
       const base=Math.min(260,Math.max(180,r.width)),scale=Math.min(avatarScale(prefs.size),Math.max(1,innerWidth-16)/base)
       const width=base*scale,height=210*scale,top=Math.max(0,r.top-height-4)
@@ -81,7 +100,7 @@ export function mountAvatar({controls, audio, state, notice, requestMode, onSurf
       viewport.oncontextmenu=e=>menu.open(e)
       viewport.onkeydown=e=>{if(e.key==='ContextMenu'||e.key==='F10'&&e.shiftKey)menu.open(e)}
       if(localState)menu.update(localState)
-      renderer=mountAvatarRenderer(viewport,{modelURL:'/duet/avatar/character.glb',onReady:()=>{if(!dead&&ticket===epoch&&root){root.dataset.ready='true';activity.start('web')}},onError:()=>{activity.stop('unavailable');publishPresentation('unavailable');notice('3D 形象暂不可用，可在设置中关闭。')}})
+      renderer=mountAvatarRenderer(viewport,{modelURL:'/duet/avatar/character.glb?v=4d39cf66',onReady:()=>{if(!dead&&ticket===epoch&&root){root.dataset.ready='true';activity.start('web')}},onError:()=>{activity.stop('unavailable');publishPresentation('unavailable');notice('3D 形象暂不可用，可在设置中关闭。')}})
     }catch{root?.remove();root=null;publishPresentation('unavailable');notice('3D 形象暂不可用，语音功能不受影响。')}
     finally{if(ticket===epoch)loading=false}
   }

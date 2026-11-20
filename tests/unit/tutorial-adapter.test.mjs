@@ -55,3 +55,13 @@ test('tutorial exposes missing workspace and rejects creation before API calls',
   assert.equal(adapter.workspaceIssue(),'workspace_required')
   await assert.rejects(adapter.create('tutorial',new AbortController().signal),/workspace_required/)
 })
+
+test('tutorial reads work mode without changing saved preferences',async()=>{
+  const previous=globalThis.fetch,requests=[]
+  globalThis.fetch=async(url,options)=>{requests.push([url,options]);return {ok:true,json:async()=>({work_mode:'agent'})}}
+  try{
+    const f=fixture();assert.equal(await f.a.workMode(f.signal),'agent')
+    assert.equal(requests.length,1);assert.equal(requests[0][0],'/duplex-control/api/voice/config')
+    assert.equal(requests[0][1].method,undefined);assert.deepEqual(f.calls,[])
+  }finally{globalThis.fetch=previous}
+})

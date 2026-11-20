@@ -12,6 +12,76 @@ import { browserSessionCatalog } from '../../src/client/workspaces.mjs'
 import { RemoteFeedback } from '../../src/host/feedback-files.mjs'
 import { PLUGIN_VERSION } from '../../src/shared/state.mjs'
 
+test('direct-only policy suppresses onboarding and denies explicit agent settings and workspace creation',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'duet-policy-'));t.after(()=>rm(dir,{recursive:true,force:true}))
+  const h=makeHarness({options:{settingsPath:join(dir,'voice.json'),endpointDiscoveryOptions:{cachePath:null,
+    fetchImpl:async url=>String(url).endsWith('/api/work-mode-policy')?Response.json({work_mode_policy:'direct_only'}):new Response(null,{status:404})}}})
+  const base='/duplex-control/api/voice/',headers={host:'localhost:3080',origin:'http://localhost:3080','x-duplex-settings':'1','content-type':'application/json'}
+  const cfg=(await h.request('GET',base+'config')).body
+  assert.equal(cfg.work_mode,'direct');assert.equal(cfg.work_mode_choice_version,1)
+  assert.equal((await h.request('PUT',base+'config',{work_mode:'agent',agent_permission:true},headers)).status,403)
+  assert.equal((await h.request('POST',base+'dedicated-workspace',{},headers)).status,403)
+  assert.equal(h.workspacePaths.length,0)
+})
+
+test('diagnostics distinguish local logs from an unqueued connection event',async()=>{
+  const h=makeHarness(), path='/duplex-control/api/voice/diagnostic'
+  const headers={host:'localhost:3080',origin:'http://localhost:3080','x-duplex-settings':'1','content-type':'application/json'}
+  const send=event=>h.request('POST',path,{event,client_trace_id:'missing',page_id:'a'},headers)
+  const lost=await send('browser.ws_closed')
+  assert.equal(lost.status,409);assert.deepEqual(lost.body,{ok:false,delivery:'not_queued'})
+  const local=await send('browser.error')
+  assert.equal(local.status,200);assert.equal(local.body.delivery,'local_only')
+})
+
+test('dedicated workspace requires a local settings write and coalesces concurrent creation',async t=>{
+  const home=await mkdtemp(join(tmpdir(),'duet-workspace-')),before=process.env.HOME
+  process.env.HOME=home
+  t.after(async()=>{if(before===undefined)delete process.env.HOME;else process.env.HOME=before;await rm(home,{recursive:true,force:true})})
+  const path='/duplex-control/api/voice/dedicated-workspace',h=makeHarness({modernWorkspaces:true})
+  const headers={host:'localhost:3080',origin:'http://localhost:3080','x-duplex-settings':'1','content-type':'application/json'}
+  assert.equal((await makeHarness({authRejection:401}).request('POST',path,{},headers)).status,401)
+  assert.equal((await h.request('POST',path,{},{...headers,origin:'https://other.invalid'})).status,403)
+  const both=await Promise.all([h.request('POST',path,{},headers),h.request('POST',path,{},headers)])
+  for(const reply of both){assert.equal(reply.status,200);assert.equal(reply.body.id,'ws1')}
+  assert.deepEqual(h.workspacePaths,[join(home,'DSH-workspaces','dsh-duet')])
+  assert.equal(h.creations.length,0)
+})
+
+test('work options are authenticated; master sessions are excluded from task numbering',async()=>{
+  const blocked=makeHarness({authRejection:401})
+  assert.equal((await blocked.request('GET','/duplex-control/api/voice/work-options')).status,401)
+  const h=makeHarness({agentService:{managedSessionIds:async()=>['s1']}})
+  const options=await h.request('GET','/duplex-control/api/voice/work-options')
+  assert.equal(options.status,200)
+  assert.equal(options.body.workspaces[0].id,'ws-selected')
+  assert.equal(options.body.models.groups[0].models[0].id,'model')
+  assert.equal(JSON.stringify(options.body).includes('not public'),false)
+  const catalog=await h.request('GET','/duplex-control/api/sessions')
+  assert.deepEqual(catalog.body.sessions,[])
+})
+
+test('agent configuration never creates a task and requires workspace plus explicit permission',async t=>{
+  const root=await mkdtemp(join(tmpdir(),'duet-agent-settings-'));t.after(()=>rm(root,{recursive:true,force:true}))
+  const calls=[]
+  const h=makeHarness({options:{settingsPath:join(root,'voice.json')},agentService:{
+    validateConfiguration:async config=>calls.push(config),open:()=>{throw Error('settings must not start tasks')},
+    taskRows:async id=>{assert.equal(id,'ws-selected');return [{session_id:'private-id',name:'原图',state:'completed'}]},
+  }})
+  const headers={host:'localhost:3080',origin:'http://localhost:3080','x-duplex-settings':'1','content-type':'application/json'}
+  const body={backend_url:'wss://example.test/ws',revision:0,work_mode:'agent',agent_options:{workspace_id:'ws-selected'}}
+  assert.equal((await h.request('PUT','/duplex-control/api/voice/config',body,headers)).status,400)
+  assert.equal((await h.request('PUT','/duplex-control/api/voice/config',{...body,agent_permission:true,agent_options:{workspace_id:'missing'}},headers)).status,400)
+  assert.equal((await h.request('PUT','/duplex-control/api/voice/config',{...body,agent_permission:true},headers)).status,200)
+  assert.ok(calls.length)
+  const saved=await h.request('GET','/duplex-control/api/voice/config')
+  assert.equal(saved.body.agent_permission_version,1)
+  assert.equal(saved.body.agent_options.workspace_id,'ws-selected')
+  const route='/duplex-control/api/voice/agent-tasks'
+  assert.deepEqual((await h.request('GET',route)).body.rows,[{name:'原图',state:'completed'}])
+  assert.equal((await makeHarness({authRejection:401}).request('GET',route)).status,401)
+})
+
 test('assistant rename persists before ok; failures retain nickname and never rename a session', async t => {
   const dir = await mkdtemp(join(tmpdir(),'duet-nickname-'))
   t.after(()=>rm(dir,{recursive:true,force:true}))
@@ -44,15 +114,26 @@ test('avatar activity accepts signed Desktop identity without a voice session an
   assert.equal((await h.request('POST','/duplex-control/api/avatar/activity',{...row,pending_count:-1},headers)).status,400)
 })
 
-function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRejection, sessionId = 's1', cancel } = {}) {
+test('a registered legacy dedicated directory keeps its identity; a same-named project is unrelated',async()=>{
+  const rows=[{id:'project',path:'/work/dsh-duet',title:'dsh-duet'},{id:'legacy',path:join(process.env.HOME,'DSH-workspaces','duet'),title:'duet'}]
+  const h=makeHarness({rows})
+  const path='/duplex-control/api/voice/'
+  assert.equal((await h.request('GET',path+'work-options')).body.dedicated_workspace_id,'legacy')
+  const result=await h.request('POST',path+'dedicated-workspace',{}, {host:'localhost:3080',origin:'http://localhost:3080','x-duplex-settings':'1','content-type':'application/json'})
+  assert.equal(result.body.id,'legacy');assert.equal(rows[1].title,'dsh-duet');assert.deepEqual(h.workspacePaths,[])
+})
+
+function makeHarness({ forkError, modernWorkspaces = false, rows=[{ id: 'ws-selected', path: '/work/selected' }],options = {}, authRejection, sessionId = 's1', cancel, agentService } = {}) {
   let handler
   const prompted = []
   const creations = [], workspacePaths = []
   const sessionItems = [{ sessionId, running: false, projections: { values: { title: '测试' } } }]
   const listeners = new Map()
   const ctx = {
+    get:name=>name==='duetAgent'?agentService:undefined,
     connection: { requestRejection: () => authRejection },
     sessionController: {
+      modelCatalog:async()=>({default:{provider:'fixture',model:'model'},groups:[{id:'fixture',name:'Fixture',models:[{id:'model',name:'Model'}]}],failures:[{secret:'not public'}]}),
       ...(cancel ? { cancel } : {}),
       list: () => Promise.resolve({
         items: sessionItems,
@@ -70,10 +151,11 @@ function makeHarness({ forkError, modernWorkspaces = false, options = {}, authRe
       fork: () => forkError ? Promise.reject(forkError) : Promise.resolve({ sessionId: 'forked' }),
     },
     workspaceController: {
+      rename:async({workspaceId,title})=>{rows.find(w=>w.id===workspaceId).title=title},
       ...(modernWorkspaces ? { create: ({ path }) => { workspacePaths.push(path); return Promise.resolve({ workspace: { workspaceId: 'ws1' } }) } } : {}),
       archiveSession: () => Promise.resolve({ archivedSessionIds: ['s1'] }),
     },
-    workspaceRegistry: { archivedSessionIds: [], list: () => [{ id: 'ws-selected', path: '/work/selected' }] },
+    workspaceRegistry: { archivedSessionIds: [], list: () => rows },
     effect: callback => callback(),
     on: (event, listener) => {
       listeners.set(event, listener)

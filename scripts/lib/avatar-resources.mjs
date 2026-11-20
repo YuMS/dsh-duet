@@ -9,8 +9,8 @@ export function validateResourceLock(value) {
   if(value?.schema!==1||!/^duet-avatar-v[1-9][0-9]*(?:\.[0-9]+)*$/.test(value.version)||value.rig!=='duet-rig-v1')throw Error('Unsupported avatar resource lock')
   if(JSON.stringify(Object.keys(value.files||{}).sort())!==JSON.stringify([...RESOURCE_FILES].sort()))throw Error('Unexpected avatar resource files')
   for(const name of RESOURCE_FILES){
-    const entry=value.files[name],url=new URL(entry.url)
-    if(url.protocol!=='https:'||url.username||url.password||url.hash||!Number.isSafeInteger(entry.bytes)||entry.bytes<8||entry.bytes>maxBytes||!(/^[a-f0-9]{64}$/).test(entry.sha256))throw Error(`Invalid resource entry: ${name}`)
+    const entry=value.files[name],url=value.localOnly===true&&entry.url===undefined?null:new URL(entry.url)
+    if((url&&(url.protocol!=='https:'||url.username||url.password||url.hash))||!Number.isSafeInteger(entry.bytes)||entry.bytes<8||entry.bytes>maxBytes||!(/^[a-f0-9]{64}$/).test(entry.sha256))throw Error(`Invalid resource entry: ${name}`)
   }
   return value
 }
@@ -59,6 +59,7 @@ async function download(entry,fetchImpl) {
 export async function prepareResources(root,{from,fetchImpl=globalThis.fetch}={}) {
   const lock=await resourceLock(root),directory=resourceDirectory(root,lock)
   if(!from){try{return await verifyResources(root)}catch(error){if(error.code!=='ENOENT')throw error}}
+  if(!from && lock.localOnly)throw Error('Import these local avatar exports with --from')
   const data=new Map()
   for(const name of RESOURCE_FILES){const bytes=from?await regularFile(join(resolve(from),name)):await download(lock.files[name],fetchImpl);validateResource(name,bytes,lock);data.set(name,bytes)}
   // Validate every input before writing anything. Existing validated versions

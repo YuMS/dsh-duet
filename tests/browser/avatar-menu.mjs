@@ -12,11 +12,11 @@ try{
    import {mountAvatarMenu} from '/src/shared/avatar-menu-ui.mjs';
    import {mountAvatarTasks} from '/src/client/avatar-tasks.mjs';
    window.AudioContext=class{constructor(){throw Error('unexpected audio')}};
-   window.events=[];window.current='s1';window.pending=new Map();window.listeners={};
+   window.events=[];window.current='s0';window.pending=new Map();window.listeners={};
    window.sessions=[{session_id:'s1',label:'灵感笔记',workspace_id:'w1',running:true},{session_id:'s2',label:'另一个工作区',workspace_id:'w2'}];
    window.sync={active:true,epoch:'e',snapshot:{sessions,results:[]},subscribe(fn){listeners.sync=fn;return()=>{} }};
    const ctx={sessions:{list:{getSnapshot:()=>({current,byId:{}}),subscribe(fn){listeners.sessions=fn;return()=>{}}},refresh:async()=>{},open:id=>{current=id;events.push('open:'+id)}},
-    workspaces:{list:{getSnapshot:()=>({items:[{workspaceId:'w1',sessionIds:['s1']},{workspaceId:'w2',sessionIds:['s2']}]}),subscribe:()=>()=>{}}},
+    workspaces:{list:{getSnapshot:()=>({items:[{workspaceId:'w1',sessionIds:['s0','s1']},{workspaceId:'w2',sessionIds:['s2']}]}),subscribe:()=>()=>{}}},
     uiSession:{pendingInteractions:{getSnapshot:()=>pending,subscribe(fn){listeners.pending=fn;return()=>{}}}}};
    window.menu=mountAvatarMenu({anchor:()=>document.getElementById('pet'),send:e=>tasks.action(e)});
    window.tasks=mountAvatarTasks({ctx,sync,avatar:()=>({localState:s=>{window.lastState=s;menu.update(s)},menuResult:r=>{events.push(r);menu.result(r)},setSize:s=>events.push('size:'+s),toggle:()=>events.push('hide')}),
@@ -46,6 +46,23 @@ try{
  await page.locator('[data-duet-local-notice]').getByRole('menuitem',{name:'去处理'}).click()
  await page.waitForFunction(()=>events.includes('open:s1'))
  assert.equal(await page.evaluate(()=>pending.size),2,'menu must not answer or dismiss DSH requests')
+ assert.equal(await page.locator('[data-duet-notice-badge]').isVisible(),false)
+ // DSH sidebar navigation (without any avatar action); a background tab isn't a visit.
+ await page.evaluate(()=>{
+   current='s0';listeners.sessions()
+   sessions.push({session_id:'s0',label:'起始页',workspace_id:'w1'})
+   Object.defineProperty(document,'hasFocus',{configurable:true,value:()=>false})
+   sync.snapshot.results.push({id:'j2',session_id:'s1',status:'succeeded',turn_end_reason:'completed',completion_seq:2},
+     {id:'j3',session_id:'s0',status:'succeeded',turn_end_reason:'completed',completion_seq:3})
+   listeners.sync();current='s1';listeners.sessions()
+ })
+ const badge=page.locator('[data-duet-notice-badge]')
+ assert.equal(await badge.innerText(),'2')
+ await page.evaluate(()=>{delete document.hasFocus;window.dispatchEvent(new Event('focus'))})
+ assert.equal(await badge.innerText(),'1')
+ assert.equal(await page.evaluate(()=>lastState.items.some(i=>i.session_id==='s1'&&i.unread)),false)
+ await page.evaluate(()=>{current='s0';listeners.sessions();listeners.sync()})
+ assert.equal(await badge.isVisible(),false)
  await page.evaluate(()=>{pending.clear();listeners.pending()})
  assert.equal(await page.evaluate(()=>lastState.items.some(x=>x.pending)),false)
  await page.locator('#pet').click({button:'right'})

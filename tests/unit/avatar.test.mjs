@@ -132,6 +132,20 @@ test('silent PCM keeps captions; interrupted playback does not reveal queued tex
   audio.avatarCaption.at=performance.now()-2001
   assert.equal(audio.avatarSample().text,'')
 })
+test('legacy spoken delta without generation follows matching textless PCM playback',()=>{
+  const a=new DuetAudio(),part={response_id:'r',segment_id:1}
+  a.context={state:'running',currentTime:0,sampleRate:1000,createBuffer:(_,n)=>({getChannelData:()=>new Float32Array(n)}),
+    createBufferSource:()=>({connect(){},start(){}}),createGain:()=>({connect(){}})}
+  a.avatarAnalyser={getFloatTimeDomainData(){},getByteFrequencyData(){}}
+  a.avatarWave=new Float32Array(4);a.avatarFrequency=new Uint8Array(512)
+  a.event({...part,type:'response.output_text.delta',delta:'一二三四五六七八九'},()=>{})
+  assert.equal(a.avatarSample().text,'')
+  a.event({...part,type:'response.output_audio.delta',text:'',generation:2,sample_rate:1000,delta:Buffer.alloc(2000).toString('base64')},()=>{})
+  assert.equal(a.avatarSample().text,'')
+  a.context.currentTime=.55;assert.equal(a.avatarSample().text,'一二三')
+  a.event({...part,type:'response.output_audio.done',generation:2},()=>{})
+  a.context.currentTime=1.05;a.progress(()=>{});assert.equal(a.avatarSample().text,'一二三四五六七八九')
+})
 test('audio meter uses active playback only, not future chunks or stopped audio',()=>{
   const audio=new DuetAudio()
   audio.context={state:'running',currentTime:1,sampleRate:48000}

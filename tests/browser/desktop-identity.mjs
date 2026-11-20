@@ -13,7 +13,7 @@ const rows=[];store.insert=async row=>{rows.push(row);return {archive_id:'fixtur
 const feedback=new FeedbackService(store)
 const base={endpoints:{online:'wss://fixture.invalid/ws',tts_only:'wss://fixture.invalid/ws'}}
 const settings=new DuetSettings(base,{path:join(dir,'voice.json')})
-let issued=0,configCalls=0,failed=false
+let issued=0,configCalls=0,failed=false,workspaceHeaders
 const errors=[]
 const browser=await chromium.launch({headless:true})
 try{
@@ -37,6 +37,15 @@ try{
       // Simulate the Desktop response bridge: discard Set-Cookie.
       return route.fulfill({json:{...settings.public(),feedback_enabled:true,feedback_identity:token}})
     }
+    if(path==='/duplex-control/api/voice/dedicated-workspace'){
+      workspaceHeaders={...req.headers()};delete workspaceHeaders.origin;delete workspaceHeaders.cookie
+      assert.equal(req.method(),'POST')
+      assert.equal(workspaceHeaders['x-duet-identity-transport'],'local-v1')
+      assert.ok(workspaceHeaders['x-duet-identity'])
+      const verified=Boolean(feedback.user({headers:workspaceHeaders}))
+      assert.ok(settingsWriteAllowed({headers:workspaceHeaders},{verifiedLocalIdentity:verified}))
+      return route.fulfill({json:{ok:true,workspace_id:'fixture-workspace'}})
+    }
     if(path==='/duplex-control/api/duet/nickname'){
       // Desktop strips Origin/cookies: use the same signed-identity boundary as Host.
       const headers={...req.headers()};delete headers.origin;delete headers.cookie
@@ -57,6 +66,7 @@ try{
       import {mountRating} from '/client/feedback.mjs';
       window.load=()=>identityFetch('/duplex-control/api/voice/config');
       window.protocols=identityVoiceProtocols;
+      window.createWorkspace=async()=>(await identityFetch('/duplex-control/api/voice/dedicated-workspace',{method:'POST',headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'},body:JSON.stringify({})})).json();
       window.rename=async nickname=>(await identityFetch('/duplex-control/api/duet/nickname',{method:'POST',headers:{'Content-Type':'application/json','X-Duplex-Settings':'1'},body:JSON.stringify({nickname,revision:0})})).json();
       window.show=ticket=>mountRating(document.querySelector('#anchor'),ticket);
       await load();window.ready=true;
@@ -77,6 +87,11 @@ try{
   assert.equal(renamed.nickname,'小多')
   assert.equal(new DuetSettings(base,{path:settings.path}).public().nickname,'小多','nickname survives Host settings reload')
   const token=protocols[1].slice('duet-identity.'.length)
+  const workspace=await page.frames()[1].evaluate(()=>createWorkspace())
+  assert.equal(workspace.workspace_id,'fixture-workspace')
+  assert.equal(workspaceHeaders['x-duet-identity'],token,'Desktop workspace POST must reuse the existing signed identity')
+  assert.equal(workspaceHeaders['x-duet-identity-transport'],'local-v1')
+  assert.equal(issued,1,'Creating a workspace must not replace the identity')
   const ticket=feedback.open({headers:{'sec-websocket-protocol':protocols.join(',')}},'fixture-session','online')
   assert.ok(ticket);feedback.close(ticket)
   await page.evaluate(ticket=>show(ticket),ticket)
@@ -94,5 +109,5 @@ try{
   await page.evaluate(()=>load())
   assert.equal(issued,2);assert.notDeepEqual(await page.evaluate(()=>protocols()),protocols)
   assert.deepEqual(await context.cookies(),[]);assert.deepEqual(errors,[])
-  console.log('Desktop identity: concurrent pages/iframe issue once, no cookies, shared signed ID, rating saved, reload stable, failure preserves identity, corrupt storage recovers')
+  console.log('Desktop identity: concurrent pages/iframe issue once, no cookies, shared signed ID, dedicated workspace POST authenticated, rating saved, reload stable, failure preserves identity, corrupt storage recovers')
 }finally{await browser.close();await rm(dir,{recursive:true,force:true})}

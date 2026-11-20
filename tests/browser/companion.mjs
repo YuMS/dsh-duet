@@ -47,6 +47,12 @@ try{
  const character=await page.locator('#avatar').boundingBox()
  assert.deepEqual(geometry.avatar_position,{x:-1500+character.x*2,y:100+character.y*2,width:character.width*2,height:character.height*2})
  console.log('Desktop: GLB and initial native layout ready')
+ // The draggable avatar remains keyboard-addressable without a rectangular focus ring.
+ await page.locator('#avatar').focus()
+ assert.equal(await page.locator('#avatar').evaluate(el=>document.activeElement===el),true)
+ assert.equal(await page.locator('#avatar').evaluate(el=>getComputedStyle(el).outlineStyle),'none')
+ assert.equal(await page.locator('#avatar canvas').evaluate(el=>getComputedStyle(el).outlineStyle),'none')
+ await page.locator('#avatar').evaluate(el=>el.blur())
  const send=value=>peer.send(JSON.stringify(value))
  let frame={type:'frame',mode:'online',ready:false,rms:.2,viseme:'A',text:'好的，我来帮你。',utterance:'fixture'}
  heartbeat=setInterval(()=>{if(peer.readyState===1)send(frame)},200)

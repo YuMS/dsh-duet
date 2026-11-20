@@ -8,6 +8,7 @@ export function mountCompanionSurface(root,{send,changed}) {
     const focused=root.contains(document.activeElement)?document.activeElement.dataset.surfaceAction:null,scroll=root.scrollTop
     const samePanel=current?.id===panel?.id
     key=next;current=panel;root.hidden=!panel
+    root.dataset.layout=panel?.layout||''
     const desired=[],nextElements=new Map()
     const element=(id,tag)=>{
       const old=samePanel?elements.get(id):null
@@ -22,6 +23,7 @@ export function mountCompanionSurface(root,{send,changed}) {
       for(const [index,n] of panel.nodes.entries()){
         const tag=n.kind==='break'?'br':n.kind==='heading'?'h3':n.kind==='button'?'button':n.kind==='checkbox'?'input':'span'
         const e=element(n.action||'node'+index,tag)
+        if(n.taskState)e.dataset.taskState=n.taskState;else delete e.dataset.taskState
         if(e.textContent!==n.text)e.textContent=n.text
         if(n.kind==='checkbox'){e.type='checkbox';e.checked=n.checked}
         if(n.kind==='button'||n.kind==='checkbox'){

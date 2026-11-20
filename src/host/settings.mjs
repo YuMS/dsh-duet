@@ -8,6 +8,12 @@ import { duetEnv } from './environment.mjs'
 import { publicServiceAuthorization, isPublicTrialEndpoint } from './service-defaults.mjs'
 import { migrateRetiredSettings } from './settings-migration.mjs'
 import { normalizeNickname } from '../shared/nickname.mjs'
+import { WORK_MODE_VERSION, agentOptions } from '../shared/work-mode.mjs'
+
+export function normalizeWorkMode(value = 'direct') {
+  if (!['direct', 'agent'].includes(value)) throw Error('invalid_work_mode')
+  return value
+}
 
 export function normalizeBackendURL(value) {
   if (typeof value !== 'string' || value.length > 2048) throw new Error('invalid_backend_url')
@@ -46,11 +52,15 @@ export class DuetSettings {
 
   validate(data) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('invalid_voice_settings')
-    if (data.backend_url === undefined && data.nickname != null) return {nickname:normalizeNickname(data.nickname)}
+    const work_mode = normalizeWorkMode(data.work_mode)
+    const work = {work_mode, work_mode_choice_version:data.work_mode_choice_version===WORK_MODE_VERSION?WORK_MODE_VERSION:0,
+      agent_permission_version:data.agent_permission_version===WORK_MODE_VERSION?WORK_MODE_VERSION:0,
+      agent_options:agentOptions(data.agent_options)}
+    if (data.backend_url === undefined && data.nickname != null) return {nickname:normalizeNickname(data.nickname), ...work}
     const backend_url = validateBackendURL(data.backend_url, data.insecure_origin)
     const url = new URL(backend_url)
     const insecure_origin = url.protocol === 'ws:' && url.origin === data.insecure_origin ? url.origin : null
-    return { backend_url, ...(insecure_origin ? { insecure_origin } : {}),
+    return { backend_url, ...work, ...(insecure_origin ? { insecure_origin } : {}),
       ...(data.nickname != null ? {nickname:normalizeNickname(data.nickname)} : {}) }
   }
 
@@ -74,6 +84,10 @@ export class DuetSettings {
       auth_configured: Boolean(config.authorization),
       debug: this.debug, revision: this.revision,
       nickname: this.saved?.nickname ?? null,
+      work_mode: this.saved?.work_mode ?? 'direct',
+      work_mode_choice_version:this.saved?.work_mode_choice_version??0,
+      agent_permission_version:this.saved?.agent_permission_version??0,
+      agent_options:agentOptions(this.saved?.agent_options),
       insecure_transport: new URL(config.endpoints.online).protocol !== 'wss:',
     }
   }
@@ -85,8 +99,15 @@ export class DuetSettings {
     const normalized = normalizeBackendURL(input.backend_url)
     const insecureOrigin = input.allow_insecure_http === true ? new URL(normalized).origin : this.saved?.insecure_origin
     const url = validateBackendURL(normalized, insecureOrigin)
+    const explicit=input.work_mode!==undefined
+    const permission=input.agent_permission===true?WORK_MODE_VERSION:input.agent_permission===false?0:this.saved?.agent_permission_version??0
     const next = this.validate({ backend_url: url, insecure_origin: insecureOrigin,
+      work_mode_choice_version:explicit?WORK_MODE_VERSION:this.saved?.work_mode_choice_version,
+      agent_permission_version:permission,
+      agent_options:input.agent_options===undefined?this.saved?.agent_options:input.agent_options,
+      work_mode: input.work_mode === undefined ? this.saved?.work_mode : input.work_mode,
       nickname: input.nickname === undefined ? this.saved?.nickname : input.nickname })
+    if(next.work_mode==='agent'&&(!permission||!next.agent_options.workspace_id))throw Error(!permission?'agent_permission_required':'workspace_selection_required')
     return this.persist(next, input.revision)
   }
 

@@ -88,7 +88,10 @@ export class DuetTrace {
     if (binary) { this.event(direction, { wire: 'binary' }, Buffer.from(raw)); return }
     try {
       const message = JSON.parse(raw.toString())
-      if (/audio/.test(message.type || '') && typeof message.delta === 'string') {
+      if(message.type==='duet.trace.batch') {
+        const {data,...metadata}=message
+        this.event(direction,{...metadata,compressed_base64_bytes:typeof data==='string'?data.length:0})
+      } else if (/audio/.test(message.type || '') && typeof message.delta === 'string') {
         const data = { ...message, delta: { stored_as: 'blob', encoding: 'base64' } }
         this.event(direction, data, Buffer.from(message.delta, 'base64'))
       } else this.event(direction, message)

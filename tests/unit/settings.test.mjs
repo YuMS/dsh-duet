@@ -9,6 +9,18 @@ import { duetConfig } from '../../src/host/proxy.mjs'
 import { migrateRetiredSettings } from '../../src/host/settings-migration.mjs'
 import { normalizeNickname, NICKNAME_LIMIT } from '../../src/shared/nickname.mjs'
 
+test('work mode defaults direct and survives URL and nickname changes', async t => {
+  const s=await fixture(t)
+  assert.equal(s.public().work_mode,'direct')
+  await s.save({backend_url:s.public().backend_url,work_mode:'agent',agent_permission:true,agent_options:{workspace_id:'project'},revision:s.revision})
+  await s.renameNickname('沐沐')
+  await s.save({backend_url:'https://custom.example/',revision:s.revision})
+  assert.equal(new DuetSettings(s.base,{path:s.path}).public().work_mode,'agent')
+  await assert.rejects(s.save({backend_url:s.public().backend_url,work_mode:'other',revision:s.revision}),/invalid_work_mode/)
+  await s.save({backend_url:s.public().backend_url,work_mode:'direct',revision:s.revision})
+  assert.equal(s.public().work_mode,'direct')
+})
+
 test('nickname supports mixed scripts and survives URL edits and restart', async t => {
   for (const name of ['沐沐','每天看星星','Star Friend',"Anne-Marie", "O'Neil",'小Star','Star沐','小 A','𠮷Abc','小-A']) assert.equal(normalizeNickname(name),name)
   for (const name of ['每天陪我看星星','One Two Three','小 Star','小Stars','Star沐沐','小 A B C','小1','小🙂','<action>','', 'x\ny']) assert.throws(()=>normalizeNickname(name),new RegExp(NICKNAME_LIMIT))

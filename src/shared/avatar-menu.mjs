@@ -73,6 +73,9 @@ export class AvatarNotices {
     this.revision++
   }
   read(id){const item=this.items.get(id);if(item)item.unread=false;if(this.toast===id)this.toast=null;this.revision++}
+  readSession(sessionId){
+    for(const item of this.items.values())if(item.session_id===sessionId&&item.unread)this.read(item.id)
+  }
   dismiss(id){if(this.items.has(id))this.dismissed.add(id);if(this.toast===id)this.toast=null;this.revision++}
   state(prefs,size,available=true){
     const pending=[...this.items.values()].find(i=>i.pending&&i.unread&&!this.dismissed.has(i.id))

@@ -1,5 +1,5 @@
 /** Opt-in walkthrough. All writes are limited to sessions created by this run. */
-import {consumeTutorialRequest} from './tutorial-request.mjs?v=0.2.1'
+import {consumeTutorialRequest} from './tutorial-request.mjs?v=0.3.0'
 export const TUTORIAL_KEY = 'dsh-duplex-tutorial-v1'
 export const QUESTION = '什么是语音交互？请用一句话简单解释，不使用工具。'
 export const INPUT = '用一句话介绍语音助手。'
@@ -40,6 +40,7 @@ export class TutorialRun {
   async begin(consent) { return this.operation(async () => {
     if (!consent?.sound || !consent?.chat) throw Error('请先确认声音和教学消息授权')
     this.require('new'); if (this.a.mode() !== 'off') throw Error('请先关闭正在使用的语音，再开始教学')
+    this.workMode=await this.a.workMode?.(this.controller.signal) || 'direct';this.check()
     this.first = await this.create('duet 教学 · 播报'); this.step = 'consent'
   }) }
   assertFocus(id) {
@@ -68,10 +69,12 @@ export class TutorialRun {
   async explainMode(mode) { return this.operation(async () => {
     this.require('consent'); this.assertFocus(this.first)
     if (!['broadcast','interaction'].includes(mode)) throw Error('未知教学模式')
-    await this.a.narrate('modes_'+mode, this.controller.signal)
+    // The recorded editor walkthrough describes input mode, not agent mode.
+    if(mode!=='interaction'||this.workMode!=='agent')await this.a.narrate('modes_'+mode, this.controller.signal)
   }) }
   async input() { return this.operation(async () => {
     this.require('input'); this.assertFocus(this.first)
+    if(this.workMode==='agent')throw Error('代理模式不使用输入框教学')
     this.second = await this.create('duet 教学 · 交互'); this.expected = ''
     await this.a.narrate('input', this.controller.signal); this.check()
     await this.write(this.second, INPUT, ''); this.step = 'edit'
@@ -222,9 +225,13 @@ export function mountTutorial({ controls, adapter, origin='page' }) {
   const reinputStep = () => act('再输入一句','您可以说：“输入，用一句简短的话介绍语音助手。”',()=>run.reinput(),sendStep,composerSelector,1000)
   const clearStep = () => act('想重新写，就清空','“清空输入框。”',()=>run.clear(),reinputStep,composerSelector,1000)
   const editStep = () => act('想改哪里，直接告诉我','“把一句话改成一句简短的话。”',()=>run.edit(),clearStep,composerSelector,1000)
-  const inputStep = () => act('接下来，试试交互模式','现在开始演示交互模式，但是这次不需要您来说话，我会通过语音为您讲解。',()=>run.input(),editStep,composerSelector,1000)
+  const inputStep = () => run.workMode==='agent'
+    ? show('代理模式 · 直接说出任务','您可以说：“帮我做一个介绍自己的网页。”\n接着说：“把背景改成浅蓝色。”就能继续修改同一个任务。\n需要您补充信息时，我会问您；完成后会为您播报。也可以随时和我聊天。',[['我知道了',done]],'[data-voice="mic"]')
+    : act('接下来，试试交互模式','现在开始演示交互模式，但是这次不需要您来说话，我会通过语音为您讲解。',()=>run.input(),editStep,composerSelector,1000)
   const broadcastStep = () => act('播报模式教学','现在我们来演示在 DSH 问一个简单的问题，看看我的播报吧。',()=>run.broadcast({sound:true,chat:true}),inputStep,'[data-voice="speaker"]',700)
-  const interactionIntro = () => act('双向箭头 · 交互模式','您可以用语音输入、修改、发送消息、切换会话，也可以和我自由聊天。',()=>run.explainMode('interaction'),broadcastStep,'[data-voice="mic"]')
+  const interactionIntro = () => run.workMode==='agent'
+    ? show('双向箭头 · 交互模式','您现在选择的是代理模式：直接说出需求，我会帮您执行任务。您也可以继续修改、询问进展，或者和我自由聊天。',[['继续体验播报',broadcastStep]],'[data-voice="mic"]')
+    : act('双向箭头 · 交互模式','您现在选择的是输入模式：用语音输入、修改、发送消息、切换会话，也可以和我自由聊天。',()=>run.explainMode('interaction'),broadcastStep,'[data-voice="mic"]')
   const broadcastIntro = () => act('喇叭 · 播报模式','在播报模式中，我只会为您简要播报完成的任务。',()=>run.explainMode('broadcast'),interactionIntro,'[data-voice="speaker"]')
   async function start(consent) {
     if(active)return

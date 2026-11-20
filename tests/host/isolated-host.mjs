@@ -26,6 +26,7 @@ async function until(fn, label, timeout = 15000) {
 }
 const upstream = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json')
+  if(req.url==='/api/work-mode-policy') {res.end(JSON.stringify({work_mode_policy:'default_direct'}));return}
   res.end(JSON.stringify({ items: [], status: 'ok' }))
 })
 const wss = new WebSocketServer({ server: upstream })
@@ -159,19 +160,18 @@ try {
   mark('canonical_duet_page_legacy_redirect')
   await page.waitForFunction(() => globalThis.__duetCtx.workspaces.list.getSnapshot().phase === 'ready')
   const initialWorkspaces = await page.evaluate(() => globalThis.__duetCtx.workspaces.list.getSnapshot().items.length)
-  // DSH 0.1.7 creates a default workspace on first boot. Earlier releases
-  // still exercise the genuinely empty registry here; browser fixtures also
-  // cover the empty-workspace guard independently of DSH's startup policy.
+  // Input mode supports Ungrouped sessions; workspace admission belongs to
+  // agent mode and session creation (covered by work-mode browser fixtures).
   if (initialWorkspaces === 0) {
   for (const kind of ['mic', 'speaker']) {
     await page.locator(`[data-voice="${kind}"]`).click()
-    await page.getByText('请先在 DSH 中创建 workspace，再开启 duet。', { exact: true }).waitFor()
-    assert.equal(await page.getByRole('dialog', { name: '开启 duet', exact: true }).count(), 0)
+    await page.getByRole('dialog', { name: '开启 duet', exact: true }).waitFor()
+    await page.getByRole('button', { name: '暂不开启', exact: true }).click()
     assert.equal(await page.evaluate(() => globalThis.__duetState.mode), 'off')
   }
   assert.equal(sessions.length, 0)
   assert.equal(await page.evaluate(() => globalThis.__micRequests), 0)
-  mark('no_workspace_blocks_both_modes_before_consent_and_microphone')
+  mark('input_mode_without_workspace_reaches_consent_without_microphone')
   } else mark('DSH_supplies_initial_workspace')
   await page.evaluate(path => globalThis.__duetCtx.workspaces.create({ path }), home)
   await page.waitForFunction(() => globalThis.__duetCtx.workspaces.list.getSnapshot().items.length > 0)
@@ -220,9 +220,13 @@ try {
     return { written: written.composer.text, cleared: cleared.composer.text, observations }
   }, sid)
   assert.equal(result.written, '独立插件写入成功'); assert.equal(result.cleared, '')
-  assert.equal(result.observations.length, 2)
-  assert.ok(result.observations[1].t - result.observations[0].t >= 1990)
-  assert.equal(result.observations[1].e.composer.text, '连续输入9')
+  // A busy browser may take over two seconds to type ten drafts. Validate the
+  // throttle and trailing value rather than assuming all timers run on time.
+  assert.ok(result.observations.length >= 2)
+  for (let i = 1; i < result.observations.length; i++) {
+    assert.ok(result.observations[i].t - result.observations[i - 1].t >= 1990)
+  }
+  assert.equal(result.observations.at(-1).e.composer.text, '连续输入9')
   mark('real_session_create_switch_rename', 'native_draft_overwrite_clear', 'composer_2s_throttle_trailing')
   await page.keyboard.press('Escape')
   await page.locator('[data-voice="speaker"]').click()

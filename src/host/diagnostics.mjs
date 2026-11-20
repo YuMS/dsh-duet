@@ -5,6 +5,38 @@ import { duetHome } from './storage-paths.mjs'
 import { diagnosticPayload, DIAGNOSTICS_PROTOCOL } from '../shared/diagnostics.mjs'
 
 const TTL = 6 * 60 * 60 * 1000
+// Cordis can reload an entry (including its module graph) without exiting Node.
+// The uploader and its short-lived, authenticated reporters belong to the host,
+// not to a particular incarnation of the voice proxy.
+const hostsKey = Symbol.for('dsh-duet.host.diagnostics.v1')
+export function acquireHostDiagnostics(server, options = {}) {
+  const hosts = globalThis[hostsKey] ??= new Map()
+  const root = options.root ?? join(duetHome(), 'diagnostic-outbox')
+  // During initial profile activation the configured listener may not be bound yet.
+  const port = server.config?.port || server.port
+  const key = port ? JSON.stringify([root, server.host, port]) : server
+  let host = hosts.get(key)
+  if (!host) {
+    host = {outbox:new DiagnosticOutbox({...options,root}), reporters:new Map(), refs:0}
+    hosts.set(key,host)
+  }
+  clearTimeout(host.timer)
+  host.refs++
+  let released = false
+  function cleanup() {
+    if (host.refs) return
+    if (host.reporters.size || host.outbox.active.size || host.outbox.inflight) {
+      host.timer = setTimeout(cleanup, 30000); host.timer.unref()
+      return
+    }
+    hosts.delete(key); host.outbox.dispose()
+  }
+  return {outbox:host.outbox, reporters:host.reporters, release() {
+    if (released) return
+    released = true
+    if (--host.refs === 0) { host.timer = setTimeout(cleanup, 30000); host.timer.unref() }
+  }}
+}
 const ownerAlive = pid => {
   if (!Number.isInteger(pid) || pid <= 0) return false
   try { process.kill(pid, 0); return true } catch (error) { return error.code === 'EPERM' }
@@ -89,15 +121,18 @@ export class ConnectionDiagnostics {
   }
   add(value) {
     const row = diagnosticPayload({...value, ...this.metadata, event_id: value.event_id || randomUUID()})
-    if (!row || this.seen.has(row.event_id) || this.count >= 96) return
+    if (!row) return false
+    if (this.seen.has(row.event_id)) return true
+    if (this.count >= 96) return false
     const terminal = /close|failed|error|pagehide/.test(row.event)
-    if (!terminal && this.count >= 80) return // Reserve room for the actual ending.
+    if (!terminal && this.count >= 80) return false // Reserve room for the actual ending.
     const now = this.outbox?.now() ?? Date.now()
     if (this.expires <= now) this.pending = []
     if (!this.pending.length) this.expires = now + TTL // Retain queued events, not session age.
     this.seen.add(row.event_id); row.sequence=this.count++; this.pending.push(row)
     this.outbox?.save(this)
     this.schedule()
+    return true
   }
   offer(offer, config, endpoint) {
     if (this.target || offer?.protocol !== DIAGNOSTICS_PROTOCOL || typeof offer.ticket !== 'string' || offer.ticket.length > 4096) return

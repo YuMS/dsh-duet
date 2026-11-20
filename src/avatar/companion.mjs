@@ -67,7 +67,7 @@ function positionSurface(){
   bubble.style.width='256px';bubble.style.right='auto'
   for(const n of nodes)n.style.maxHeight=(Math.max(1,h-24)/fit)+'px'
   const bubbleHeight=bubble.hidden?0:Math.min({small:90,medium:180,large:260}[bubbleSize]*fit,bubble.getBoundingClientRect().height)
-  const panelHeight=panel.hidden?0:Math.min(256*fit,panel.getBoundingClientRect().height)
+  const panelHeight=panel.hidden?0:Math.min((panel.dataset.layout==='tasks'?384:256)*fit,panel.getBoundingClientRect().height)
   const separation=nodes.length>1?gap:0,needed=bubbleHeight+panelHeight+separation
   const above=Math.max(0,avatar.top-gap-(y+12)),below=Math.max(0,y+h-12-(tools.bottom+gap))
   let side=desiredPanel?surfaceSide:null

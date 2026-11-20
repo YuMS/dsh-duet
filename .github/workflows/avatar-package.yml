@@ -33,6 +33,10 @@ jobs:
           node-version: '24'
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.7.0'
+      - run: pnpm --dir vendor/dsh-duet-superagent install --frozen-lockfile && pnpm --dir vendor/dsh-duet-superagent run check
       - run: npm ci
       - run: node scripts/prepare-avatar-assets.mjs
       - run: npm run build:avatar
@@ -63,6 +67,10 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.7.0'
+      - run: pnpm --dir vendor/dsh-duet-superagent install --frozen-lockfile && pnpm --dir vendor/dsh-duet-superagent run check
       - run: npm ci
       - run: node scripts/prepare-avatar-assets.mjs
       - run: npm run build:avatar
@@ -82,6 +90,8 @@ jobs:
           mkdir -p artifacts/check
           tar -xzf artifacts/dsh-duet-*.tgz -C artifacts/check
           node scripts/verify-avatar-package.mjs --package-root artifacts/check/package
+          node scripts/verify-agent-package.mjs --package-root artifacts/check/package
+          node scripts/test-installed-package.mjs artifacts/dsh-duet-*.tgz
           sha256sum artifacts/dsh-duet-*.tgz > artifacts/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:

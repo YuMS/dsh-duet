@@ -30,6 +30,21 @@ function fixture() {
   return { state, connections, notices, advance(ms) { now += ms; state.tick() } }
 }
 
+test('ordinary results in agent online mode advance on ingress, independently of playback',async()=>{
+  const {state,connections}=fixture()
+  await state.toggleMic()
+  const c=connections[0];c.ordinaryOnlineResults=true;c.receive({type:'ready'})
+  const results=['harness_a','harness_b'].map(message_id=>({message_id}))
+  state.update({hidden:false,running:false,state:{},results})
+  assert.deepEqual(c.messages,[results[0]])
+  c.receive({type:'external_message.accepted',message_id:'harness_a'})
+  assert.deepEqual(c.messages,results)
+  c.receive({type:'external_message.done',message_id:'agent:m1'})
+  assert.equal(state.pending.size,1)
+  c.receive({type:'external_message.accepted',message_id:'harness_b'})
+  assert.equal(state.pending.size,0)
+})
+
 test('default off does not connect or queue model work', () => {
   const f = fixture()
   f.state.update({ hidden: false, running: true, state: {}, results: [{ message_id: 'old' }] })
@@ -162,7 +177,9 @@ test('server compatibility is a configured semver range, missing and future vers
   assert.equal(compatibleVersion('0.1.10'), true)
   assert.equal(compatibleVersion('0.2.0'), true)
   assert.equal(compatibleVersion('0.2.99'), true)
-  assert.equal(compatibleVersion('0.3.0'), false)
+  assert.equal(compatibleVersion('0.3.0'), true)
+  assert.equal(compatibleVersion('0.3.99'), true)
+  assert.equal(compatibleVersion('0.4.0'), false)
   assert.equal(compatibleVersion('0.2.0', '0.1.0', '0.2.0'), false)
   assert.equal(compatibleVersion('0.8.3', '0.8.2', '0.9.0'), true)
   const state = { composer_state: { text: '未发送草稿' } }

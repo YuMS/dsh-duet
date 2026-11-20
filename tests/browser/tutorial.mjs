@@ -11,8 +11,8 @@ try{
     if(path.endsWith('.mjs'))return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.replace('/duet/assets/',''),import.meta.url),'utf8')})
     return route.fulfill({contentType:'text/html',body:`<!doctype html><html><head></head><body style="margin:0;background:#111923;color:white;font-family:system-ui"><aside style="width:220px;height:100vh;border-right:1px solid #445"><h2>DeepSeek Harness</h2><div data-slot="sidebar.sessions">教学会话</div><div id="dsh-duet-controls" style="position:fixed;bottom:30px;left:20px;width:170px;height:35px">duet <button data-voice="speaker">喇叭</button></div></aside><main style="position:absolute;left:270px;top:40px"><h2>对话</h2></main><div data-composer-input style="position:fixed;bottom:40px;left:270px;width:750px;min-height:55px;border:1px solid #678;padding:12px"></div><script type="module">
       import {mountTutorial} from '/duet/assets/client/tutorial.mjs';
-      window.calls=[];window.workspaceIssue=null;let current='original',mode='off';const drafts=new Map();
-      const adapter={workspaceIssue:()=>window.workspaceIssue,mode:()=>mode,current:()=>current,unlock:async()=>{},
+      window.calls=[];window.workspaceIssue=null;window.workMode='direct';let current='original',mode='off';const drafts=new Map();
+      const adapter={workMode:async()=>window.workMode,workspaceIssue:()=>window.workspaceIssue,mode:()=>mode,current:()=>current,unlock:async()=>{},
         create:async name=>{calls.push(['create',name]);const id='s'+drafts.size;drafts.set(id,'');return id},
         focus:async id=>{current=id;calls.push(['focus',id])},
         write:async(id,text,expected)=>{if(drafts.get(id)!==expected)throw Error('draft conflict');drafts.set(id,text);document.querySelector('[data-composer-input]').textContent=text;calls.push(['write',text])},
@@ -95,4 +95,18 @@ try{
   const stopped=await page.evaluate(()=>calls.length);await page.waitForTimeout(1600)
   assert.equal(await page.evaluate(()=>calls.length),stopped)
   console.log(JSON.stringify({cancel_auto_transition:true}))
+  await page.evaluate(()=>{window.workMode='agent';window.calls=[];tutorial.open()})
+  await page.getByRole('checkbox').nth(0).check();await page.getByRole('checkbox').nth(1).check();await click('开始教学')
+  await page.getByRole('heading',{name:'双向箭头 · 交互模式'}).waitFor()
+  assert.match(await page.locator('.duet-tutorial').innerText(),/代理模式/)
+  await click('继续体验播报')
+  await page.getByRole('heading',{name:'代理模式 · 直接说出任务'}).waitFor()
+  const agentCalls=await page.evaluate(()=>calls)
+  assert.equal(agentCalls.filter(c=>c[0]==='create').length,1)
+  assert.equal(agentCalls.filter(c=>c[0]==='submit').length,1)
+  assert.equal(agentCalls.some(c=>c[0]==='narrate'&&['modes_interaction','input','edit','clear','send'].includes(c[1])),false)
+  assert.equal(agentCalls.some(c=>c[0]==='mode'&&c[1]==='online'),false)
+  await click('我知道了');await click('完成')
+  assert.deepEqual(errors,[])
+  console.log(JSON.stringify({agent_tutorial_no_editor_or_microphone:true}))
 }finally{await browser.close()}

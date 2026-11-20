@@ -4,11 +4,14 @@ import { createHash } from 'node:crypto'
 import vm from 'node:vm'
 import { PLUGIN_VERSION } from '../src/shared/state.mjs'
 import { publicAsset } from '../src/host/assets.mjs'
+import {compatibleVersion, duetConfig} from '../src/host/proxy.mjs'
 const root = new URL('../', import.meta.url)
 const read = name => readFileSync(new URL(name, root), 'utf8')
 const pkg = JSON.parse(read('package.json'))
 assert.equal(pkg.name, 'dsh-duet')
 assert.equal(pkg.version, PLUGIN_VERSION)
+const policy=duetConfig({})
+assert.ok(compatibleVersion(pkg.version,policy.min_version,policy.max_version_exclusive), 'Host must accept its own plugin version')
 assert.equal(pkg.dsh.client.platform, 'web')
 for (const item of [pkg.main, pkg.exports['./client'].default, pkg.dsh.bundle.patch]) {
   assert.ok(existsSync(new URL(item, root)), `missing entry ${item}`)

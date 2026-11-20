@@ -42,7 +42,8 @@ async function fixture(t, rejectStatus, overrides = {}) {
         const value = binary ? raw : JSON.parse(raw)
         messages.push(value)
         if(value.type==='session.update'&&overrides.diagnostics!==false)ws.send(JSON.stringify({type:'client.diagnostics.ready',protocol:'client_diagnostics_v1',ticket:'test-ticket'}))
-        if (value.type === 'session.update') ws.send(JSON.stringify({ type: 'session.created', ...(overrides.resultPush ? {harness_sync:{protocol:'harness_sync_v1',connection_id:'a'.repeat(32),cursor:64,epoch:'fixture'}} : {}), connection_hint_reporting:overrides.hintReporting===true, session: { id:'voice-from-upstream', config: { harness_control_transport: 'client_rpc_v1', external_message_protocol: overrides.resultProtocol === false ? undefined : 'harness_result_v2' } } }))
+        if (value.type === 'session.update') ws.send(JSON.stringify({ type: 'session.created', ...(overrides.resultPush ? {harness_sync:{protocol:'harness_sync_v1',connection_id:'a'.repeat(32),cursor:64,epoch:'fixture'}} : {}), connection_hint_reporting:overrides.hintReporting===true, session: { id:'voice-from-upstream', config: { agent_trace_protocol:overrides.traceProtocol, agent_protocol:overrides.agentProtocol, harness_control_transport: 'client_rpc_v1', external_message_protocol: overrides.resultProtocol === false ? undefined : 'harness_result_v2' } } }))
+        if(value.type==='duet.trace.batch')ws.send(JSON.stringify({...value,type:'duet.trace.ack',persisted:true}))
         if(value.type==='harness.sync.subscribe') ws.send(JSON.stringify({type:'harness.sync.ready',connection_id:value.connection_id}))
         if(value.type==='harness.sync.push') ws.send(JSON.stringify({type:'harness.sync.ack',connection_id:value.connection_id,event_id:value.event_id,accepted:true}))
         if (value.type === 'external_message') ws.send(JSON.stringify({ type: 'external_message.done', message_id: value.message_id }))
@@ -52,20 +53,80 @@ async function fixture(t, rejectStatus, overrides = {}) {
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening')
   const host = http.createServer()
   const url = `ws://127.0.0.1:${upstream.address().port}`
-  const stop = registerDuetProxy({ webServer: { registerUpgrade({ handler }) { host.on('upgrade', handler); return () => host.off('upgrade', handler) } } }, { ...duetConfig(), authorization: '', ...overrides, endpoints: { online: url, tts_only: url } }, overrides.feedback, overrides.canUseVoice, overrides.discoveryFactory?.(url))
   host.listen(0, '127.0.0.1'); await once(host, 'listening')
+  const install = () => registerDuetProxy({ webServer: {host:'127.0.0.1', port:host.address().port, registerUpgrade({ handler }) { host.on('upgrade', handler); return () => host.off('upgrade', handler) } } }, { ...duetConfig(), authorization: '', ...overrides, endpoints: { online: url, tts_only: url } }, overrides.feedback, overrides.canUseVoice, overrides.discoveryFactory?.(url))
+  let stop = install()
   t.after(async () => {
     stop()
     for (const ws of wss.clients) ws.terminate()
     wss.close()
     await Promise.all([new Promise(r => host.close(r)), new Promise(r => upstream.close(r))])
   })
-  return { connections, messages, headers, diagnosticUploads, connect(mode = 'tts_only', version = '0.1.0', protocols) {
+  return { connections, messages, headers, diagnosticUploads, reload(){stop();stop=install();return stop}, connect(mode = 'tts_only', version = '0.1.0', protocols) {
     return new WebSocket(`ws://127.0.0.1:${host.address().port}/duplex-control/voice/ws?mode=${mode}&plugin_version=${version}`, protocols)
   } }
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+
+test('agent handshake uses the native workspace source for requests',async t=>{
+  const received=[]
+  const source={overview:()=>({version:'harness_overview_v1',sessions:{},session_order:[]}),
+    events:after=>({events:[],cursor:after}),cursor:()=>0,subscribe:()=>()=>{},
+    receive:body=>{received.push(body);return {received:true,request_id:body.request_id}}}
+  const f=await fixture(t,null,{workMode:()=> 'agent',agentProtocol:'duet_agent_v1',agentService:()=>({open:async id=>{assert.equal(id,'workspace-a');return source}})})
+  const ws=f.connect('online');await once(ws,'open')
+  const created=next(ws);ws.send(JSON.stringify({type:'session.update',workspace_id:'workspace-a'}))
+  assert.equal((await created).type,'session.created')
+  assert.equal(f.messages[0].session.task_mode,'duplex_no_tts_agent')
+  assert.equal(f.messages[0].session.agent.protocol,'duet_agent_v1')
+  assert.equal(f.messages[0].session.harness,undefined)
+  f.connections[0].send(JSON.stringify({type:'duet.agent.request',protocol:'duet_agent_v1',request_id:'r1',message:{text:'检查进展'}}))
+  for(let i=0;i<100&&!received.length;i++)await new Promise(r=>setTimeout(r,5))
+  assert.equal(received.length,1)
+  assert.equal(received[0].request_id,'r1')
+  ws.close()
+})
+
+test('agent mode rejects a voice service without the new protocol instead of executing old actions',async t=>{
+  const source={overview:()=>({sessions:{}})}
+  const f=await fixture(t,null,{workMode:()=> 'agent',agentService:()=>({open:async()=>source})})
+  const ws=f.connect('online');await once(ws,'open')
+  const result=next(ws);ws.send(JSON.stringify({type:'session.update',workspace_id:'workspace-a'}))
+  assert.equal((await result).error.code,'duet_agent_backend_upgrade_required')
+})
+for(const mode of ['online','tts_only'])test(mode+' traces stay on the host socket and do not reach browser',async t=>{
+  let acked=false
+  const trace={id:'b'.repeat(32),add(){},head:()=>acked?undefined:{seq:1,body:'{"kind":"journal"}'},acknowledge:()=>{acked=true},bindTarget:()=>true}
+  const source={trace,overview:()=>({}),events:after=>({events:[],cursor:after}),cursor:()=>0,subscribe:()=>()=>{}}
+  const f=await fixture(t,null,{workMode:()=> 'agent',agentProtocol:'duet_agent_v1',traceProtocol:'duet_trace_v1',agentService:()=>({open:async()=>source})})
+  const ws=f.connect(mode);await once(ws,'open');const received=[]
+  ws.on('message',raw=>received.push(JSON.parse(raw)))
+  const ready=next(ws);ws.send(JSON.stringify({type:'session.update',workspace_id:'w'}));await ready
+  for(let i=0;i<100&&!acked;i++)await new Promise(r=>setTimeout(r,10))
+  assert.ok(acked);assert.equal(f.messages[0].client.agent_trace_protocol,'duet_trace_v1')
+  assert.ok(f.messages.some(e=>e.type==='duet.trace.batch'))
+  assert.ok(!received.some(e=>e.type?.startsWith('duet.trace.')))
+  ws.close();await once(ws,'close')
+})
+for (const mode of ['online','tts_only']) test(mode+' routes native events and ordinary results independently',async t=>{
+  const event={type:'external_message',source:'router',sequence:1,message_id:'m1',purpose:'answer',text:'你好'}
+  let cursor=0
+  const source={overview:()=>({}),events:()=>({cursor:1,events:cursor?[]:[event]}),owns:id=>id==='worker-ticket',
+    cursor:()=>cursor,acknowledge:c=>{cursor=c},subscribe:()=>()=>{}}
+  const f=await fixture(t,null,{workMode:()=> 'agent',agentProtocol:'duet_agent_v1',agentService:()=>({open:async()=>source})})
+  const ws=f.connect(mode);await once(ws,'open')
+  const ready=next(ws);ws.send(JSON.stringify({type:'session.update',workspace_id:'w'}));await ready
+  const ordinary=id=>({type:'external_message',message_id:'harness_'+id,text:'结果',source:{
+    session_id:id,session_name:'会话',job_id:id,status:'completed'}})
+  for(const id of ['worker-ticket','manual']) {
+    const reply=next(ws);ws.send(JSON.stringify(ordinary(id)))
+    assert.equal((await reply).message_id,'harness_'+id)
+  }
+  assert.deepEqual(f.messages.filter(m=>m.type==='external_message'),[ordinary('manual')])
+  assert.deepEqual(f.messages.find(m=>m.type==='duet.agent.events').events,[event])
+  ws.close();await once(ws,'close')
+})
 test('individual voice issue is persisted and forwarded to browser',async t=>{
   const applied=[]
   const f=await fixture(t,null,{prepareVoice:async()=>'voice_'+'a'.repeat(32),applyVoiceIssue:value=>{applied.push(value)}})
@@ -149,6 +210,24 @@ test('diagnostics are uploaded after close and never forwarded to workers',async
     assert.equal(f.messages.some(e=>e.type==='client.diagnostic'),false)
   }
 })
+test('host reload drains socket-close callbacks and accepts late HTTP reports only for the original page and identity',async t=>{
+  const f=await fixture(t,null,{feedback:{user:req=>req.headers.user ?? 'fixture-owner',open:()=>null,close:()=>{}}})
+  const ws=await begin(f,'online')
+  const {client_trace_id,page_id}=f.messages.find(m=>m.type==='session.update').client
+  const closed=once(ws,'close')
+  const replacement=f.reload()
+  await closed
+  const row={client_trace_id,page_id,event:'browser.ws_closed',event_id:'late-close',code:1001}
+  assert.equal(replacement.reportDiagnostic({headers:{user:'other'}},row),false)
+  assert.equal(replacement.reportDiagnostic({headers:{}},{...row,page_id:'other'}),false)
+  assert.equal(replacement.reportDiagnostic({headers:{}},row),true)
+  assert.equal(replacement.reportDiagnostic({headers:{}},row),true)
+  const rows=()=>f.diagnosticUploads.flatMap(batch=>batch.events)
+  for(let i=0;i<100&&!['browser.ws_closed','proxy.browser_closed','proxy.upstream_closed'].every(type=>rows().some(e=>e.event===type));i++)await new Promise(r=>setTimeout(r,20))
+  for(const event of ['browser.ws_closed','proxy.browser_closed','proxy.upstream_closed'])
+    assert.equal(rows().filter(e=>e.event===event).length,1,event)
+})
+
 test('missing required diagnostic handshake rejects outdated server explicitly',async t=>{
   const old=await fixture(t,null,{diagnostics:false}),ws=old.connect('online')
   await once(ws,'open');const result=next(ws)
@@ -303,7 +382,7 @@ test('tts_only freezes wire mode, buffers state without inference, forwards only
   assert.equal(connection_route.selection,'custom')
   assert.match(connection_route.selected_endpoint,/^ws:\/\/127\.0\.0\.1:/)
   assert.deepEqual(client, { name: 'dsh-duet', version: '0.1.0', protocol_major: 1,
-    metadata_version:'duet_session_v1',mode:'tts_only',diagnostics_protocol:'client_diagnostics_v1',
+    metadata_version:'duet_session_v1',mode:'tts_only',diagnostics_protocol:'client_diagnostics_v1',work_mode:'direct',work_protocol:'harness_direct_v1',
     host_version: PLUGIN_VERSION, page_binding: 'connection_owner_v1', client_trace_id: client.client_trace_id, page_id: '' })
   assert.match(client.client_trace_id,/^[a-f0-9-]{36}$/)
   ws.send(JSON.stringify({ type: 'harness.state', state: { focused_session_id: 's1' } }))

@@ -14,11 +14,13 @@ export function mountAvatarSurfaces({avatar,canActivate=()=>false}) {
       if(nodes.length>=160)return
       if(node.nodeType===3){if(node.textContent.trim())nodes.push({kind:'text',text:node.textContent.slice(0,4000)});return}
       if(node.nodeType!==1||node.hidden||node.getAttribute('aria-hidden')==='true'||['SVG','SCRIPT','STYLE'].includes(node.tagName))return
+      if(node.tagName==='DETAILS'&&!node.open){const summary=node.querySelector(':scope > summary');if(summary)walk(summary);return}
       if(node.matches('button,input[type=checkbox],summary')) {
         let action=actionIds.get(node);if(!action){action=`a${++actionSerial}`;actionIds.set(node,action)}
         const gesture=node.hasAttribute('data-duet-user-gesture')&&!canActivate()
         actions.set(action,node)
-        nodes.push({kind:node.matches('input')?'checkbox':'button',text:node.matches('input')?'':node.textContent.slice(0,4000),action,disabled:node.disabled===true,checked:node.checked===true,gesture,label:node.getAttribute('aria-label')||node.closest('label')?.textContent.slice(0,100)||''})
+        const text=node.matches('summary')?[...node.children].map(n=>n.textContent).join('\n'):node.textContent
+        nodes.push({kind:node.matches('input')?'checkbox':'button',text:node.matches('input')?'':text.slice(0,4000),action,disabled:node.disabled===true,checked:node.checked===true,gesture,label:node.getAttribute('aria-label')||node.closest('label')?.textContent.slice(0,100)||'',...(node.dataset.taskState?{taskState:node.dataset.taskState}:{})})
         return
       }
       if(/^H[1-6]$/.test(node.tagName)){nodes.push({kind:'heading',text:node.textContent.slice(0,4000)});return}
@@ -33,18 +35,19 @@ export function mountAvatarSurfaces({avatar,canActivate=()=>false}) {
     if(disposed)return
     const view=avatar()?.presentation?.()||{},native=view.native===true
     // Sidebar branding uses data-duet-surface too; only explicit numeric panels are eligible.
-    const candidates=[...document.querySelectorAll('[data-duet-avatar-surface]')].filter(n=>/^\d{1,3}$/.test(n.dataset.duetAvatarSurface)&&n.dataset.duetSurfaceOrigin!=='page'&&!n.hidden&&n.isConnected&&(n.tagName!=='DIALOG'||n.open))
+    const candidates=[...document.querySelectorAll('[data-duet-avatar-surface]')].filter(n=>/^\d{1,3}$/.test(n.dataset.duetAvatarSurface)&&n.dataset.duetSurfaceOrigin!=='page'&&(!n.hasAttribute('data-duet-avatar-native-only')||native)&&!n.hidden&&n.isConnected&&(n.tagName!=='DIALOG'||n.open))
     const panel=candidates.sort((a,b)=>Number(b.dataset.duetAvatarSurface)-Number(a.dataset.duetAvatarSurface))[0]
     for(const node of moved.keys())if(!candidates.includes(node))restore(node)
     for(const node of candidates)if(node!==panel){restore(node);if(native){node.setAttribute('data-duet-surface-native','');moved.set(node,true)}}
     if(!panel){if(current||last||native!==nativeBefore)avatar()?.surface?.({type:'surface',panel:null});last='';semantic='';current=null;actions.clear();nativeBefore=native;return}
     let id=ids.get(panel);if(!id){id=`s${++serial}`;ids.set(panel,id)}
     const nodes=snapshot(panel),target=panel.dataset.duetSurfaceTarget||null
-    const key=JSON.stringify({id,nodes,target}),changed=key!==last
+    const layout=panel.hasAttribute('data-duet-agent-tasks')?'tasks':null
+    const key=JSON.stringify({id,nodes,target,layout}),changed=key!==last
     // Cosmetic countdown text does not invalidate an in-flight click. All other
     // content and action state still fence stale confirmations.
     const actionKey=JSON.stringify({id,target,nodes:nodes.map(n=>n.action&&actions.get(n.action)?.hasAttribute('data-duet-live-text')?{...n,text:''}:n)})
-    if(changed)current={id,revision:(current?.revision||0)+(actionKey!==semantic?1:0),nodes,target}
+    if(changed)current={id,revision:(current?.revision||0)+(actionKey!==semantic?1:0),nodes,target,...(layout?{layout}:{})}
     semantic=actionKey
     // A real click must happen in the playback document. Keep that counterpart visible.
     const audioUnlock=panel.hasAttribute('data-duet-audio-unlock')

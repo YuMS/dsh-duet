@@ -1,8 +1,9 @@
 /** DSH browser services plus existing voice connection; never opens a microphone. */
-import { PLUGIN_VERSION } from '../shared/state.mjs?v=0.2.1'
-import { focusedSession } from './composer.mjs?v=0.2.1'
-import { sessionCreationPayload, workspaceIssue } from './workspaces.mjs?v=0.2.1'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.2.1'
+import { PLUGIN_VERSION } from '../shared/state.mjs?v=0.3.0'
+import { focusedSession } from './composer.mjs?v=0.3.0'
+import { sessionCreationPayload, workspaceIssue } from './workspaces.mjs?v=0.3.0'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.3.0'
+import { identityFetch } from './identity.mjs?v=0.3.0'
 export function tutorialAdapter(ctx, state, audio, pollReady, startBridge = startComposerBridge) {
   let narration
   const completed = new Map()
@@ -39,6 +40,12 @@ export function tutorialAdapter(ctx, state, audio, pollReady, startBridge = star
     return s
   }
   return {
+    async workMode(signal){
+      const response=await identityFetch('/duplex-control/api/voice/config',{signal,credentials:'same-origin',cache:'no-store'})
+      if(!response.ok)throw Error('暂时无法读取工作方式，请稍后重试教学')
+      const config=await response.json();check(signal)
+      return config.work_mode==='agent'?'agent':'direct'
+    },
     workspaceIssue:()=>workspaceIssue(ctx),
     mode:()=>state.mode,current,
     observe(event){if(event.type==='external_message.done'){completed.set(event.message_id,event.status);if(completed.size>128)completed.delete(completed.keys().next().value)}},

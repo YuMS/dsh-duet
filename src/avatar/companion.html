@@ -1,8 +1,18 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>duet</title><style>
+#surface[data-layout=tasks]{background:transparent;border:0;box-shadow:none;padding:4px;white-space:normal}
+#surface[data-layout=tasks] br{display:none}
+#surface[data-layout=tasks] button{display:flex;align-items:center;gap:12px;box-sizing:border-box;width:100%;margin:0 0 8px;padding:14px 16px;border:1px solid #ffffffa0;border-radius:20px;background:#f7f9fbea;color:#253344;text-align:left;font:550 14px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;box-shadow:0 6px 18px -8px #172c4938;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);cursor:pointer}
+#surface[data-layout=tasks] button:hover{background:#fff}
+#surface[data-layout=tasks] [data-task-state]::before{content:'';display:block;flex:0 0 18px;width:18px;height:18px;box-sizing:border-box;border:2px solid #62a0cd45;border-top-color:#468abf;border-radius:50%;animation:duet-task-spin 1s linear infinite}
+#surface[data-layout=tasks] [data-task-state=completed]::before{content:'✓';border:0;background:#dcefe8;color:#23845e;text-align:center;font:600 14px/18px system-ui;animation:none}
+#surface[data-layout=tasks] [data-task-state=waiting]::before{content:'?';border:0;background:#fff0d9;color:#ad7523;text-align:center;font:600 13px/18px system-ui;animation:none}
+#surface[data-layout=tasks] [data-task-state=failed]::before,#surface[data-layout=tasks] [data-task-state=stopped]::before{content:'!';border:0;background:#f8e3e3;color:#b45353;text-align:center;font:600 13px/18px system-ui;animation:none}
+@keyframes duet-task-spin{to{transform:rotate(360deg)}}
 html,body{margin:0;background:transparent;font:13px/1.6 system-ui;overflow:hidden;color:#e9f4ff;user-select:none}
 #stage{--scale:1;position:absolute;left:0;top:0;width:280px;height:calc(210px + 280px * var(--scale));transform-origin:top left}
 #avatar{position:absolute;left:calc((280px - 260px * var(--scale)) / 2);top:140px;height:calc(280px * var(--scale));width:calc(260px * var(--scale));cursor:grab;touch-action:none}
+#avatar,#avatar canvas{outline:none;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
 #bubble{position:absolute;bottom:calc(100% - 134px);left:12px;right:12px;padding:12px 14px;background:#142638ed;border:1px solid #8dc5ed45;border-radius:17px;box-shadow:0 5px 20px #0002;max-height:180px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;scrollbar-width:thin}
 #bubble{box-sizing:border-box}#bubble[hidden]{display:none}#bubble[data-input=true]{background:#193b53f5;border-color:#7cb8e599}
 #keyboard{display:inline-block;vertical-align:middle;margin-right:7px}#keyboard[hidden]{display:none}

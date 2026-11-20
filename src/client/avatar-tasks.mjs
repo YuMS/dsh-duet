@@ -26,12 +26,15 @@ export function mountAvatarTasks({ctx,sync,avatar,tutorial,settings,focus=()=>wi
     const s=scope()
     let pending=[];try{pending=interactions?.snapshot()||[]}catch{}
     model.update({scope:s.id,epoch:sync.epoch,sessions:s.rows,results:sync.active?(sync.snapshot?.results||[]):[],interactions:pending})
+    if(!document.hidden&&document.hasFocus())model.readSession(focusedSession(ctx))
     publish()
   }
   const unsubscribe=sync.subscribe(refresh),workspaceStop=ctx.workspaces?.list?.subscribe?.(refresh),sessionStop=ctx.sessions?.list?.subscribe?.(refresh)
   if(interactions)unwatch=interactions.subscribe(refresh)
   const preferenceChange=()=>{prefs=noticePreferences();publish()}
   window.addEventListener('storage',preferenceChange)
+  window.addEventListener('focus',refresh)
+  document.addEventListener('visibilitychange',refresh)
   const channel=typeof BroadcastChannel==='undefined'?null:new BroadcastChannel(NOTICE_KEY)
   if(channel)channel.onmessage=preferenceChange
   const change=patch=>{prefs=saveNoticePreferences({...prefs,...patch});channel?.postMessage('changed');publish()}
@@ -47,7 +50,7 @@ export function mountAvatarTasks({ctx,sync,avatar,tutorial,settings,focus=()=>wi
           refresh()
           const item=model.items.get(request.id)
           if(!sync.active||!item||!scope().rows.some(s=>s.session_id===item.session_id))throw Error('这条通知已失效，请回到 DSH 查看')
-          await openLocalSession(ctx,item.session_id,controller.signal);focus();model.read(item.id);publish()
+          await openLocalSession(ctx,item.session_id,controller.signal);focus();model.readSession(item.session_id);publish()
           return result(request,true)
         }
         case 'dismiss':model.dismiss(request.id);publish();break
@@ -64,5 +67,5 @@ export function mountAvatarTasks({ctx,sync,avatar,tutorial,settings,focus=()=>wi
   }
   // Only expires local DND; never polls a server.
   const timer=setInterval(publish,1000);refresh()
-  return{action,refresh,dispose(){dead=true;controller.abort();clearInterval(timer);unsubscribe();unwatch();workspaceStop?.();sessionStop?.();channel?.close();window.removeEventListener('storage',preferenceChange)}}
+  return{action,refresh,dispose(){dead=true;controller.abort();clearInterval(timer);unsubscribe();unwatch();workspaceStop?.();sessionStop?.();channel?.close();window.removeEventListener('storage',preferenceChange);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',refresh)}}
 }

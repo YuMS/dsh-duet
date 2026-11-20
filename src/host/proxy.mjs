@@ -1,7 +1,7 @@
 /** Same-origin voice relay; endpoint and compatibility policy belong to the DSH host. */
 import { createRequire } from 'node:module'
 import { DuetTrace } from './trace.mjs'
-import { ConnectionDiagnostics, DiagnosticOutbox } from './diagnostics.mjs'
+import { ConnectionDiagnostics, acquireHostDiagnostics } from './diagnostics.mjs'
 import { DIAGNOSTICS_PROTOCOL } from '../shared/diagnostics.mjs'
 import { PLUGIN_VERSION } from '../shared/state.mjs'
 import { duetEnv } from './environment.mjs'
@@ -11,11 +11,13 @@ import {VOICE_PROTOCOL} from '../shared/identity.mjs'
 import { broadcastText } from '../shared/result-notification.mjs'
 import { sessionLabel } from '../shared/catalog.mjs'
 import { normalizeNickname } from '../shared/nickname.mjs'
+import { AgentConnection } from './agent-connection.mjs'
+import { workModeIssue } from '../shared/work-mode.mjs'
 import { DEFAULT_DUET_URL, publicServiceAuthorization } from './service-defaults.mjs'
 export { DEFAULT_DUET_URL } from './service-defaults.mjs'
 const require = createRequire(import.meta.url)
 
-export function compatibleVersion(version, min = '0.1.0', maxExclusive = '0.3.0') {
+export function compatibleVersion(version, min = '0.1.0', maxExclusive = '0.4.0') {
   const parse = v => /^\d+\.\d+\.\d+$/.test(v || '') ? v.split('.').map(Number) : null
   const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
   const v = parse(version), low = parse(min), high = parse(maxExclusive)
@@ -29,7 +31,7 @@ export function duetConfig(env = process.env) {
   }
   return {
     min_version: duetEnv('MIN_VERSION', env) || '0.1.0',
-    max_version_exclusive: duetEnv('MAX_VERSION_EXCLUSIVE', env) || '0.3.0',
+    max_version_exclusive: duetEnv('MAX_VERSION_EXCLUSIVE', env) || '0.4.0',
     control_transport: duetEnv('CONTROL_TRANSPORT', env) || 'client_rpc_v1',
     authorization: publicServiceAuthorization(endpoints),
     endpoints,
@@ -63,8 +65,8 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
   const server = new WebSocketServer({ noServer: true, maxPayload: 2_100_000,
     handleProtocols: protocols => protocols.has(VOICE_PROTOCOL) ? VOICE_PROTOCOL : false })
   const connections = new Map()
-  const reporters = new Map()
-  const diagnosticOutbox = new DiagnosticOutbox(config.diagnosticOptions)
+  const {reporters, outbox:diagnosticOutbox, release:releaseDiagnostics} =
+    acquireHostDiagnostics(ctx.webServer, config.diagnosticOptions)
   const stop = ctx.webServer.registerUpgrade({
     path: '/duplex-control/voice/ws',
     handler(req, socket, head) {
@@ -92,6 +94,9 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
         })
         let back, feedbackTicket = null, connectionRoute, selectedConfig, diagnostics
         let chosenVoice = 'default'
+        const policy = config.workPolicy?.()
+        const agentMode = (policy?.work_mode ?? config.workMode?.()) === 'agent'
+        let agentConnection
         let voiceChallengeStarted = false
         const opening = new AbortController()
         front.once('close', () => feedback?.close(feedbackTicket))
@@ -107,26 +112,36 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           if (front.readyState === WebSocket.OPEN) front.send(JSON.stringify({ type: 'error', error: { code } }))
           front.close(code === 'capacity_exhausted' ? 1013 : 1008)
           back?.close()
+          agentConnection?.close()
         }
         const mode = params.get('mode')
         if (!compatibleVersion(params.get('plugin_version'), config.min_version, config.max_version_exclusive)) { fail('plugin_upgrade_required'); return }
         if (!['online', 'tts_only'].includes(mode)) { fail('invalid_voice_mode'); return }
+        if(policy) {
+          const issue=workModeIssue(policy)
+          if(issue){fail(issue);return}
+        }
         let anonymousUserId
         try{anonymousUserId=feedback?.user(req)}catch{ /* Identity is optional, not admission. */ }
-        const clientMetadata=sessionMetadata(params,mode,anonymousUserId)
+        const clientMetadata={...sessionMetadata(params,mode,anonymousUserId),work_mode:agentMode?'agent':'direct',
+          ...(agentMode?{agent_trace_protocol:'duet_trace_v1'}:{}),
+          work_protocol:agentMode?'duet_agent_v1':'harness_direct_v1'}
         diagnostics = new ConnectionDiagnostics({client_trace_id:clientMetadata.client_trace_id,
           page_id:clientMetadata.page_id, plugin_version:clientMetadata.version, host_version:PLUGIN_VERSION, mode},
           diagnosticOutbox.fetcher, diagnosticOutbox)
-        reporters.set(clientMetadata.client_trace_id, {diagnostics, page_id:clientMetadata.page_id, user:anonymousUserId})
+        const reporter = {diagnostics, page_id:clientMetadata.page_id, user:anonymousUserId}
+        reporters.set(clientMetadata.client_trace_id, reporter)
         // Allow keepalive HTTP diagnostics to arrive after the browser socket closed.
-        front.once('close', () => { const timer=setTimeout(()=>reporters.delete(clientMetadata.client_trace_id),30000); timer.unref() })
+        front.once('close', () => { const timer=setTimeout(()=>{
+          if (reporters.get(clientMetadata.client_trace_id) === reporter) reporters.delete(clientMetadata.client_trace_id)
+        },30000); timer.unref() })
         trace.event('session.metadata',clientMetadata)
         if (!canUseVoice()) { fail('workspace_required'); return }
         connections.set(front, { mode, ready: false, trace })
         front.on('close', () => connections.delete(front))
         const target = config.endpoints[mode]
         if (!target) { fail('voice_mode_unavailable'); return }
-        const clientRPC = mode === 'online' && config.control_transport === 'client_rpc_v1'
+        const clientRPC = !agentMode && mode === 'online' && config.control_transport === 'client_rpc_v1'
         const rpcRequests = new Map()
         const pending = []
         const startup = setTimeout(() => fail('voice_start_timeout'), 20000)
@@ -180,7 +195,7 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
               initialized = true
               let nickname = null
               try { nickname = normalizeNickname(config.nickname?.()) } catch { /* Default identity. */ }
-              forward(JSON.stringify({ type: 'session.update',
+              const update = { type: 'session.update',
                 client: {...clientMetadata, diagnostics_protocol:DIAGNOSTICS_PROTOCOL,
                   ...(message.client?.audio_text_protocol === 'audio_text_delta_v1'
                     ? {audio_text_protocol:'audio_text_delta_v1'} : {}),
@@ -190,10 +205,21 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
                 type: 'realtime', preset_id: 'server_default',
                 duet_nickname: nickname,
                 io_mode:mode === 'tts_only'?'external_only':'online',
+                ...(agentMode?{work_mode:'agent',work_protocol:'duet_agent_v1'}:{}),
                 ...(clientRPC ? { harness: { transport: 'client_rpc_v1' } } : {}),
                 audio: { input: { format: { type: 'audio/pcm', rate: 16000 } } },
                 debug: { enabled: false, slot_grid: false },
-              } }))
+              } }
+              if (agentMode) {
+                agentConnection = new AgentConnection(config.agentService?.(), message => forward(JSON.stringify(message)),
+                  frame=>{if(!terminal && front.readyState===WebSocket.OPEN)front.send(JSON.stringify(frame))},
+                  {target:()=>new URL(target).origin,
+                    canSend:()=>!terminal && back?.readyState===WebSocket.OPEN && back.bufferedAmount<16*1024 && pending.length===0})
+                void agentConnection.prepare(policy?.agent_options?.workspace_id ?? message.workspace_id,policy?.agent_options).then(agent => {
+                  if (!terminal && front.readyState === WebSocket.OPEN) forward(JSON.stringify({...update,
+                    session:{...update.session, task_mode:'duplex_no_tts_agent', agent}}))
+                }).catch(error => fail(error.message))
+              } else forward(JSON.stringify(update))
               return
             }
             if (!initialized) throw new Error('session_not_started')
@@ -214,8 +240,13 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
               return
             }
             if (message.type === 'external_message') {
-              if (mode !== 'tts_only') throw new Error('external_only_session_required')
-              forward(JSON.stringify(externalWithState(message, state)))
+              if (!agentMode && mode !== 'tts_only') throw new Error('external_only_session_required')
+              const notification = externalWithState(message, state)
+              if (agentMode && (!agentConnection?.ready || !notification.source)) throw Error('invalid_external_message_source')
+              if (agentMode && agentConnection.source.owns(notification.source.session_id)) {
+                // The native event stream is authoritative. Release the page's single-flight queue.
+                front.send(JSON.stringify({type:'external_message.done',message_id:notification.message_id,status:'handled_by_agent'}))
+              } else forward(JSON.stringify(notification))
             } else if (['output_audio_buffer.playback_progress', 'output_audio_buffer.cleared', 'session.close'].includes(message.type)) {
               forward(raw.toString())
             } else throw new Error('unsupported_voice_event')
@@ -268,16 +299,31 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           if (!binary) {
             try {
               const event = JSON.parse(data.toString())
+              if(event.type==='duet.local.tasks')return // local native navigation is never server-directed
+              if(event.type?.startsWith('duet.trace.')){agentConnection?.handle(event);return}
+              if (agentMode && event.type?.startsWith('duet.agent.')) {
+                if (mode === 'tts_only' && event.type === 'duet.agent.request') {
+                  fail('input_audio_disabled'); return
+                }
+                try { agentConnection.handle(event) } catch(error) { fail(error.message) }
+                return
+              }
               if (event.type === 'harness.rpc.request') {
                 if (!clientRPC || rpcRequests.size >= 8) { fail('invalid_harness_rpc'); return }
                 rpcRequests.set(event.request_id, event.connection_id)
               }
               if (event.type === 'session.created') {
+                if(event.session?.config?.work_mode && event.session.config.work_mode !== (agentMode?'agent':'direct')) {
+                  fail('work_mode_protocol_mismatch'); return
+                }
+                if (agentMode) {
+                  try { agentConnection.offer(event) } catch(error) { fail(error.message); return }
+                }
                 if (!diagnostics.target) { fail('voice_server_upgrade_required'); return }
                 if (clientRPC && event.harness_sync?.protocol === 'harness_sync_v1') resultPushConnection = event.harness_sync.connection_id
                 hintReporting=event.connection_hint_reporting===true
                 if (clientRPC && event.session?.config?.harness_control_transport !== 'client_rpc_v1') { fail('harness_rpc_backend_upgrade_required'); return }
-                if (mode === 'tts_only' && event.session?.config?.external_message_protocol !== 'harness_result_v2') { fail('harness_result_backend_upgrade_required'); return }
+                if (!agentMode && mode === 'tts_only' && event.session?.config?.external_message_protocol !== 'harness_result_v2') { fail('harness_result_backend_upgrade_required'); return }
                 const connection = connections.get(front)
                 if (connection) connection.ready = true
                 clearTimeout(startup)
@@ -313,13 +359,14 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           diagnostics.add({event:'proxy.browser_closed',code})
           trace.event('rpc.pending_at_close', { request_ids: [...rpcRequests.keys()] })
           opening.abort(); clearTimeout(startup); back?.close(1000, 'duet_browser_closed')
+          agentConnection?.close()
           const timer = setTimeout(() => back?.terminate(), 1000)
           timer.unref()
         })
       })
     },
   })
-  const dispose = () => { stop(); for (const socket of server.clients) socket.close(1001); server.close(); diagnosticOutbox.dispose() }
+  const dispose = () => { stop(); for (const socket of server.clients) socket.close(1001); server.close(); releaseDiagnostics() }
   dispose.snapshot = () => ({
     online: [...connections.values()].filter(c => c.mode === 'online' && c.ready).length,
     tts_only: [...connections.values()].filter(c => c.mode === 'tts_only' && c.ready).length,
@@ -328,9 +375,9 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
   })
   dispose.reportDiagnostic = (req, row) => {
     const entry = reporters.get(row?.client_trace_id)
-    if (!entry || entry.page_id !== row.page_id) return
-    if (entry.user && feedback?.user(req) !== entry.user) return
-    entry.diagnostics.add(row)
+    if (!entry || entry.page_id !== row.page_id) return false
+    if (entry.user && feedback?.user(req) !== entry.user) return false
+    return entry.diagnostics.add(row)
   }
   dispose.closeConnections = code => {
     for (const socket of connections.keys()) {

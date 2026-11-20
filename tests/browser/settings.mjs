@@ -25,6 +25,8 @@ try {
       if(path==='/duet/assets/shared/avatar-ui.mjs')return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/shared/avatar-ui.mjs',import.meta.url),'utf8')})
       if (path === '/duet/') { await route.fulfill({ contentType: 'text/html', body: html }); return }
       if (path.startsWith('/duet/assets/') && path.endsWith('/identity.mjs')) return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.slice('/duet/assets/'.length),import.meta.url),'utf8')})
+      if (path.startsWith('/duet/assets/') && path.endsWith('/work-mode.mjs')) return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.slice('/duet/assets/'.length),import.meta.url),'utf8')})
+      if (path.endsWith('/voice/work-options')) return route.fulfill({json:{workspaces:[{id:'project',path:'/work/project'}],models:{groups:[{id:'provider',name:'Provider',models:[{id:'model',name:'Model',reasoning:{efforts:[{id:'high',name:'高'}]}}]}]}}})
       if (path.endsWith('tutorial-request.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/tutorial-request.mjs',import.meta.url),'utf8')});return}
       if (path.endsWith('microphone.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/microphone.mjs',import.meta.url),'utf8')});return}
       if (path.endsWith('shortcuts.mjs')) {await route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/client/shortcuts.mjs',import.meta.url),'utf8')});return}
@@ -50,6 +52,9 @@ try {
           const input = req.postDataJSON()
           assert.equal(Object.hasOwn(input, 'auth_token'), false)
           config.backend_url = input.backend_url; config.revision++
+          if(input.work_mode!==undefined){config.work_mode=input.work_mode;config.work_mode_choice_version=1}
+          if(input.agent_options)config.agent_options=input.agent_options
+          if(input.agent_permission!==undefined)config.agent_permission_version=input.agent_permission?1:0
         }
         json = config
       } else if (path.endsWith('/announcements')) {
@@ -74,6 +79,35 @@ try {
     assert.equal(await page.locator('#authToken').count(), 0)
     assert.equal(await page.locator('#advancedConnection').isVisible(), true)
     assert.equal(await page.locator('#authState').textContent(), '已配置')
+    assert.equal(await page.locator('[data-work-mode][aria-pressed=true]').count(),0)
+    const starts=calls.filter(([m,p])=>m==='PUT'&&p.endsWith('/voice/config')).length
+    assert.equal(await page.getByRole('button',{name:'预览首次使用'}).count(),0)
+    await page.goto('http://localhost:19200/duet/?preview=work-mode')
+    const preview=page.getByRole('region',{name:'duet 工作方式'})
+    await preview.locator('[data-work-mode=agent]').click()
+    await preview.getByLabel('工作区',{exact:true}).selectOption('example')
+    assert.equal(await preview.locator('[data-work-mode=agent]').getAttribute('aria-pressed'),'true')
+    await preview.getByRole('button',{name:'确定',exact:true}).click()
+    await preview.waitFor({state:'detached'})
+    assert.equal(calls.filter(([m,p])=>m==='PUT'&&p.endsWith('/voice/config')).length,starts)
+    await page.locator('[data-work-mode=agent]').click()
+    await page.getByText(/允许执行命令、联网及读写工作区外文件/).waitFor()
+    assert.equal(await page.locator('#workModeSettings input[type=checkbox]').count(),0)
+    await page.getByRole('button',{name:'创建 dsh-duet 专属工作区'}).waitFor()
+    assert.equal(config.work_mode,undefined)
+    await page.getByLabel('工作区',{exact:true}).selectOption('project')
+    await page.waitForFunction(()=>document.querySelector('[data-work-mode=agent]').getAttribute('aria-pressed')==='true')
+    assert.equal(config.agent_permission_version,1)
+    await page.getByLabel('任务模型',{exact:true}).selectOption(JSON.stringify(['provider','model']))
+    await page.waitForFunction(()=>!document.querySelector('[data-work-mode=agent]').disabled)
+    assert.equal(config.work_mode,'agent')
+    assert.equal(config.agent_options.workspace_id,'project')
+    assert.equal(config.agent_options.executor_model.model,'model')
+    await page.locator('[data-work-mode=direct]').click()
+    await page.waitForFunction(()=>document.querySelector('[data-work-mode=direct]').getAttribute('aria-pressed')==='true')
+    assert.equal(config.work_mode,'direct')
+    assert.equal(config.agent_permission_version,0)
+    assert.equal(await page.locator('#workModeSettings [role=status]').textContent(),'')
     assert.equal(await page.locator('#avatarSize').getAttribute('data-size'),'large')
     for(const size of ['medium','small','large']){
       await page.locator('#avatarSize').focus();await page.keyboard.press(size==='small'?'Space':'Enter')
@@ -178,6 +212,16 @@ try {
     }
     assert.deepEqual(errors, [])
     console.log(`debug=${debug}: visibility, polling, URL-only save, no token input, plain-text announcements passed`)
+    const beforePreview=config.revision
+    await page.goto('http://localhost:19200/duet/?preview=work-mode')
+    await preview.getByRole('button',{name:/输入模式/}).click()
+    assert.equal(await preview.locator('[data-work-mode=direct]').getAttribute('aria-pressed'),'true')
+    await preview.getByRole('button',{name:'确定',exact:true}).click()
+    await preview.waitFor({state:'detached'})
+    assert.equal(config.revision,beforePreview)
+    await page.goto('http://localhost:19200/duet/?preview=work-mode')
+    await preview.getByRole('button',{name:'退出预览'}).click()
+    assert.equal(await page.evaluate(()=>sessionStorage.getItem('dsh.duet.defer-work-mode.v1')),null)
     await page.close()
   }
 } finally { await browser.close() }

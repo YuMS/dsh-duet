@@ -29,7 +29,7 @@ export function browserSessionCatalog(ctx, rows) {
   const snapshot = ctx.sessions.list.getSnapshot()
   const active = focusedSession(ctx)
   const archived = new Set(ctx.workspaces?.list?.getSnapshot().archivedSessionIds || [])
-  return orderSessionCatalog(rows.filter(row => !archived.has(row.session_id)).map(row => ({
+  return orderSessionCatalog(rows.filter(row => !row.duet_managed && !archived.has(row.session_id)).map(row => ({
     ...row, active: row.session_id === active,
     label: sessionLabel(row.label, row.session_id),
     updated_at: snapshot.byId?.[row.session_id]?.updatedAt ?? row.updated_at,

@@ -10,13 +10,14 @@ export function avatarSurface(value) {
     if(!n||!['text','heading','button','checkbox','break'].includes(n.kind)||typeof n.text!=='string'||n.text.length>4000)throw Error('invalid_surface')
     length+=n.text.length;if(length>10000)throw Error('invalid_surface')
     const node={kind:n.kind,text:n.text}
+    if(['running','completed','waiting','failed','stopped'].includes(n.taskState))node.taskState=n.taskState
     if(n.kind==='button'||n.kind==='checkbox') {
       if(!/^a\d+$/.test(n.action))throw Error('invalid_surface')
       Object.assign(node,{action:n.action,disabled:n.disabled===true,checked:n.checked===true,gesture:n.gesture===true,label:String(n.label||'').slice(0,100)})
     }
     return node
   })
-  return {type:'surface',panel:{id:p.id,revision:p.revision,nodes,target:['online','tts_only'].includes(p.target)?p.target:null}}
+  return {type:'surface',panel:{id:p.id,revision:p.revision,nodes,target:['online','tts_only'].includes(p.target)?p.target:null,...(p.layout==='tasks'?{layout:'tasks'}:{})}}
 }
 export function avatarSurfaceAction(v) {
   if(v?.type!=='surface_action'||!/^s\d+$/.test(v.id)||!/^a\d+$/.test(v.action)||!Number.isSafeInteger(v.revision)||v.revision<1)throw Error('invalid_surface_action')
