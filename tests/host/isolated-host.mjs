@@ -111,6 +111,8 @@ try {
     const later = page.getByRole('button', { name: 'Configure later', exact: true })
     await later.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {})
     if (await later.isVisible()) await later.click()
+    const account = page.getByRole('dialog', { name: 'Get started', exact: true })
+    if (await account.isVisible()) await account.getByRole('button', { name: 'Close', exact: true }).click()
   }
   page.on('pageerror', e => errors.push(e.message))
   // Test-only instrumentation of the real native UI carrier; no DSH sources
