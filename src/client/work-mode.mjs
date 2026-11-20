@@ -1,5 +1,5 @@
-import { WORK_MODES, AGENT_PERMISSION_TEXT, workModeIssue, TASK_STATES, visibleTaskRows } from '../shared/work-mode.mjs'
-import { identityFetch } from './identity.mjs?v=0.3.0'
+import { WORK_MODES, AGENT_PERMISSION_TEXT, AGENT_WORKSPACE_NOTICE, workModeIssue, TASK_STATES, visibleTaskRows } from '../shared/work-mode.mjs'
+import { identityFetch } from './identity.mjs?v=0.3.1'
 
 const styles = `
 .dt-work{--ink:light-dark(#20392d,#e3eee7);--muted:light-dark(#53695c,#a7b9ae);--edge:light-dark(#cbd7cf,#3b4a40);--surface:light-dark(#fff,#191f1d);--tint:light-dark(#eef7f0,#203329);--accent:light-dark(#236548,#b3e9cb);color:var(--ink);font:normal 14px/1.5 system-ui,sans-serif;text-align:start;display:grid;gap:16px;container-type:inline-size}
@@ -23,6 +23,20 @@ const styles = `
 .dt-work button{width:auto;margin:0;border:1px solid var(--edge);border-radius:9px;padding:8px 14px;color:var(--ink);background:transparent;font:600 13px/1.4 system-ui;cursor:pointer}
 .dt-work button:disabled{opacity:.5;cursor:default}.dt-work :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .dt-work [role=status]:empty{display:none}.dt-work [role=status]{font-size:13px}
+.dt-work button.choice{position:relative;padding:18px 40px 18px 18px;gap:8px;border-radius:16px;transition:background .15s,border-color .15s}
+.dt-work button.choice::after{content:'';position:absolute;right:16px;top:20px;width:14px;height:14px;border:1.5px solid var(--edge);border-radius:50%}
+.dt-work button.choice[aria-pressed=true]::after{border:4px solid var(--accent);background:var(--surface)}
+.dt-work .choice strong{font-size:16px}.dt-work .choice small{line-height:1.65}
+.dt-work .agent-options{padding:18px;border:1px solid var(--edge);border-radius:16px;gap:18px;background:color-mix(in srgb,var(--surface) 94%,var(--accent))}
+.dt-work .workspace-row{justify-content:flex-start;gap:10px}.dt-work .workspace-row select{flex:1;min-width:160px;max-width:360px}
+.dt-work .fields{gap:16px}.dt-work label.field{gap:8px}.dt-work select{height:42px;border-radius:10px;padding:0 12px}
+.dt-work .auto-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--edge)}
+.dt-work .auto-row label{cursor:pointer;color:var(--ink);font-size:14px}
+.dt-work button.auto-toggle{position:relative;flex:0 0 40px;width:40px;height:24px;min-height:24px;padding:0;border:1px solid var(--edge);border-radius:20px;background:var(--edge)}
+.dt-work button.auto-toggle::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--surface);box-shadow:0 1px 3px #0003;transition:transform .16s}
+.dt-work button.auto-toggle[aria-checked=true]{background:var(--accent);border-color:var(--accent)}
+.dt-work button.auto-toggle[aria-checked=true]::after{transform:translateX(16px)}
+.dt-work .auto-row small{color:var(--muted);font-size:12px}.dt-work .auto-copy{display:grid;gap:3px}
 @container(max-width:390px){.dt-work .choices,.dt-work .fields{grid-template-columns:1fr}}
 `
 
@@ -65,7 +79,13 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
     const title=document.createElement('strong'),detail=document.createElement('small')
     title.textContent=item.name;detail.textContent=item.description
     if(value==='agent'&&(!config.work_mode_policy||config.work_mode_policy==='recommend_agent')){const badge=document.createElement('span');badge.className='badge';badge.textContent='推荐';title.append(badge)}
-    label.append(title,detail);if(value==='agent')label.append(grant);choices.append(label);cards[value]=label
+    label.append(title,detail)
+    if(value==='agent'){
+      const warning=document.createElement('small'),emphasis=document.createElement('b')
+      const [before,after]=AGENT_WORKSPACE_NOTICE.split('只能');emphasis.textContent='只能'
+      warning.append(before,emphasis,after);label.append(warning,grant)
+    }
+    choices.append(label);cards[value]=label
   }
   const agent=document.createElement('div');agent.className='agent-options'
   const permission=document.createElement('small');permission.className='permission';permission.id='dt-permission-'+crypto.randomUUID()
@@ -111,6 +131,15 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
   }
   const executor=modelSelect('任务模型','跟随 DSH 默认模型',config.agent_options?.executor_model)
   fields.append(executor.label,executor.effort.label)
+  const autoRow=document.createElement('div');autoRow.className='auto-row'
+  const autoLabel=document.createElement('label');autoLabel.textContent='自动跳转会话'
+  const autoSwitch=document.createElement('button');autoSwitch.type='button';autoSwitch.setAttribute('role','switch');autoSwitch.setAttribute('aria-label','自动跳转会话')
+  autoSwitch.className='auto-toggle';autoSwitch.id='dt-auto-'+crypto.randomUUID();autoLabel.htmlFor=autoSwitch.id
+  const autoCopy=document.createElement('div');autoCopy.className='auto-copy'
+  const autoHelp=document.createElement('small');autoHelp.textContent='跟随任务，打开正在处理或刚完成的会话';autoCopy.append(autoLabel,autoHelp)
+  let autoEnabled=config.agent_options?.auto_switch_session!==false
+  const drawAuto=()=>{autoSwitch.setAttribute('aria-checked',String(autoEnabled));autoSwitch.title=autoEnabled?'关闭自动跳转':'开启自动跳转'}
+  drawAuto();autoRow.append(autoSwitch,autoCopy);agent.append(autoRow)
   const advanced=document.createElement('details'),summary=document.createElement('summary');summary.textContent='高级设置 · 任务管理模型'
   const manager=modelSelect('任务管理模型','与任务模型相同',config.agent_options?.manager_model)
   const extra=document.createElement('div');extra.className='fields';extra.append(manager.label,manager.effort.label)
@@ -151,6 +180,7 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
     tasks.hidden=!activeAgent
     agent.hidden=onboarding?draft!=='agent':!activeAgent&&!choosingAgent
     fields.hidden=executor.label.hidden=advanced.hidden=!activeAgent
+    autoRow.hidden=!activeAgent
     if(!activeAgent)executor.effort.label.hidden=true
     workspace.input.options[0].disabled=activeAgent
     permission.hidden=grant.hidden=activeAgent
@@ -162,7 +192,7 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
       confirm.disabled=busy||!draft||(draft==='agent'&&!dedicated&&!workspace.input.value)
     }
   }
-  const restoreFields=()=>{const opts=config.agent_options;dedicated=!!dedicatedId&&dedicatedId===opts?.workspace_id;workspace.input.value=dedicated?'':opts?.workspace_id||'';executor.restore(opts?.executor_model);manager.restore(opts?.manager_model)}
+  const restoreFields=()=>{const opts=config.agent_options;dedicated=!!dedicatedId&&dedicatedId===opts?.workspace_id;workspace.input.value=dedicated?'':opts?.workspace_id||'';executor.restore(opts?.executor_model);manager.restore(opts?.manager_model);autoEnabled=opts?.auto_switch_session!==false;drawAuto()}
   const persist=async(mode)=>{
     if(busy||disposed)return
     status.textContent=''
@@ -181,7 +211,7 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
       if(disposed)return
       const result=await api('config',{backend_url:current.backend_url,revision:current.revision,work_mode:mode,
         agent_permission:mode==='agent',agent_options:mode==='agent'?{workspace_id:dedicated?dedicatedId:workspace.input.value,
-          executor_model:executor.value(),manager_model:manager.value()}:current.agent_options})
+          executor_model:executor.value(),manager_model:manager.value(),auto_switch_session:autoEnabled}:current.agent_options})
       Object.assign(config,result);choosingAgent=false;restoreFields()
       if(!disposed)saved(result)
     }catch(error){if(!disposed){if(!onboarding){choosingAgent=false;restoreFields()}status.textContent=error.message}}
@@ -197,6 +227,7 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
     dedicatedId=row.id;legacyTitle=false
   }
   confirm.onclick=()=>{if(!confirm.disabled)void persist(draft)}
+  autoSwitch.onclick=()=>{if(busy)return;autoEnabled=!autoEnabled;drawAuto();if(!onboarding)void persist('agent')}
   create.onclick=async()=>{
     if(busy||disposed)return
     status.textContent=''

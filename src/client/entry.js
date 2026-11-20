@@ -1,19 +1,26 @@
 window.__ModuleLoader__.load({
   id: "dsh-duet",
-  factory: () => {
+  factory: (require) => {
     const module = { exports: {} }
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" })
 
-    const inject = ["sessions", "conversation", "uiSession", "workspaces"]
+    const inject = ["sessions", "conversation", "uiSession", "workspaces", "slots", "uiWorkspace"]
 
     function apply(ctx) {
+      ctx.effect(() => {
+        let active=true,dispose
+        import('/duet/assets/client/agent-tool-views.mjs?v=0.3.1').then(module=>{
+          if(active&&ctx.slots&&typeof require==='function')dispose=module.mountAgentToolViews(ctx,require('react'))
+        }).catch(error=>console.warn('duet task cards could not load:',error))
+        return ()=>{active=false;dispose?.()}
+      }, 'duet-client: task navigation cards')
       let loadFailure = false
       let showLoadFailure = () => {}
       ctx.effect(() => {
         let active = true
         let dispose
-        import('/duet/assets/client/browser.mjs?v=0.3.0').then(module => {
+        import('/duet/assets/client/browser.mjs?v=0.3.1').then(module => {
           if (active) dispose = module.mountDuet(ctx)
         }).catch(error => {
           console.warn('duet controls could not load:', error)

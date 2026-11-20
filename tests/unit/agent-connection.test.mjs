@@ -19,7 +19,12 @@ test('task presentation is local: replay has no focus, live current run can navi
   const f=fixture(),ui=[],up=[],c=new AgentConnection(f.service,e=>up.push(e),e=>ui.push(e))
   f.source.taskRows=()=>[{session_id:'worker-native',task_id:'ticket',run_id:'run1',name:'测试',state:'running'}]
   f.source.ids={raw:()=> 'req1'}
+  f.source.runtime={masterId:'orchestrator-'+ 'a'.repeat(32),store:{tickets:{get:()=>({attention:{id:'native-question-1'}})}}}
   await c.prepare('workspace');c.offer(offer)
+  assert.equal(ui[0].main_session_id,f.source.runtime.masterId)
+  assert.equal(ui[0].rows[0].attention_id,'native-question-1')
+  assert.ok(!JSON.stringify(up).includes('native-question-1'))
+  assert.ok(!JSON.stringify(up).includes(f.source.runtime.masterId))
   const event={purpose:'result',task_id:'ticket',run_id:'run1',request_id:'req1'}
   c.showTasks([event]);assert.deepEqual(ui.map(e=>e.focus),[null])
   c.handle({type:'duet.agent.request',protocol:AGENT_PROTOCOL,request_id:'req1',message:{text:'继续'}})

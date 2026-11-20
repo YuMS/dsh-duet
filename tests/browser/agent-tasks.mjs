@@ -62,6 +62,9 @@ try{
   await p.waitForTimeout(40);assert.equal(await p.evaluate(()=>snapshot.current),'user-session')
   await p.evaluate(()=>{window.draft='';panel.update(frame,true)})
   await p.waitForFunction(()=>snapshot.current===frame.focus)
+  assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),true,'running task stays visible when visited')
+  await p.evaluate(()=>{snapshot.current='user-session';panel.update({...frame,focus:null},false)})
+  assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),true,'running task stays visible after leaving')
   await p.evaluate(()=>{snapshot.current='user-session';frame.rows[0].state='completed';frame.rows[0].finished_at=Date.now();panel.update(frame,false)})
   assert.equal(await p.evaluate(()=>snapshot.current),'user-session')
   await p.getByRole('button',{name:/修改已有图画.*已完成/}).click()
@@ -129,6 +132,18 @@ try{
     await mirror.locator('button').evaluateAll(nodes=>nodes.forEach((e,i)=>e.textContent=['制作一个简单好看的 HTML 页面','整理今天的灵感笔记','确认一下页面的配色'][i]))
     await mirror.screenshot({path:process.env.DUET_NATIVE_TASK_PREVIEW})
   }
+  // Only the yellow question card is read; running cards remain visible.
+  await p.evaluate(()=>{snapshot.current='worker-'+'d'.repeat(32);panel.observe();surfaces.sync()})
+  await p.waitForFunction(()=>document.querySelector('#native-mirror').querySelectorAll('button').length===2)
+  assert.equal(await mirror.getByRole('button',{name:/任务 d/}).count(),0)
+  assert.equal(await mirror.getByRole('button',{name:/任务 b/}).count(),1)
+  await p.evaluate(()=>{snapshot.current='user-session';panel.update(frame,false);surfaces.sync()})
+  assert.equal(await mirror.getByRole('button',{name:/任务 d/}).count(),0)
+  await p.evaluate(()=>{snapshot.current='worker-'+'b'.repeat(32);panel.observe();surfaces.sync()})
+  assert.equal(await mirror.getByRole('button',{name:/任务 b/}).count(),1,'viewing a running task never hides it')
+  await p.evaluate(()=>{snapshot.current='user-session';frame.rows[2].attention_id='next-question';panel.update(frame,false);surfaces.sync()})
+  await p.waitForFunction(()=>document.querySelector('#native-mirror').querySelectorAll('button').length===3)
+  assert.equal(await mirror.getByRole('button',{name:/任务 d/}).count(),1,'a new question must not inherit the old read state')
   await p.evaluate(()=>{window.native=false;window.surface='recovering';window.dispatchEvent(new Event('duet:avatar-presentation'));surfaces.sync()})
   assert.equal(await mirror.isVisible(),false)
   assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),false,'desktop recovery must not leak its card into DSH')
@@ -136,8 +151,9 @@ try{
   await p.waitForFunction(()=>getComputedStyle(document.querySelector('[data-duet-agent-tasks]')).visibility==='visible')
   assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),true)
   await p.evaluate(async()=>{
-    const {noteTaskVisit}=await import('/shared/work-mode.mjs')
+    const {noteTaskVisit,noteTaskNoticeVisit}=await import('/shared/work-mode.mjs')
     frame.rows=[]
+    noteTaskNoticeVisit({session_id:'worker-'+'0'.repeat(32),state:'waiting_user'})
     for(let i=0;i<320;i++)noteTaskVisit('worker-'+i.toString(16).padStart(32,'0'),Date.now()-60*86400_000)
     panel.update(frame,false)
   })
@@ -149,7 +165,8 @@ try{
   assert.equal(await p.evaluate(async()=>{
     const {visibleTaskRows}=await import('/shared/work-mode.mjs')
     const session_id='worker-'+'0'.repeat(32)
-    return visibleTaskRows([{session_id,finished_at:Date.now()-90*86400_000},{session_id,finished_at:Date.now()}]).length
-  }),1)
+    return visibleTaskRows([{session_id,state:'waiting_user'},{session_id,state:'running'},
+      {session_id,finished_at:Date.now()-90*86400_000},{session_id,finished_at:Date.now()}]).length
+  }),2)
   assert.equal(await p.locator('[data-duet-agent-tasks]').count(),0)
 }finally{await b.close()}

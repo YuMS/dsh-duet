@@ -1,5 +1,5 @@
 import {focusedSession,openLocalSession} from './composer.mjs'
-import {TASK_STATES as states, noteTaskVisit, visibleTaskRows} from '../shared/work-mode.mjs'
+import {TASK_STATES as states, noteTaskNoticeVisit, taskCardState, visibleTaskRows} from '../shared/work-mode.mjs'
 const active=new Set(['queued','pending','running','progress','waiting','waiting_user','blocked'])
 const bubbleCSS=`
 [data-duet-agent-tasks]{position:fixed;isolation:isolate;z-index:2147483599;margin:0;color:CanvasText;font:13px/1.35 -apple-system,BlinkMacSystemFont,system-ui,sans-serif}
@@ -76,8 +76,9 @@ export function agentTaskPanel(ctx,anchor,notice,presentation=()=>null){
   function observe(){
     if(!currentFrame || document.hidden || !document.hasFocus())return
     const id=focusedSession(ctx)
-    if(visibleTaskRows(currentFrame.rows).some(r=>r.session_id===id && r.finished_at)){
-      noteTaskVisit(id); update({...currentFrame,focus:null},false)
+    const row=visibleTaskRows(currentFrame.rows).find(r=>r.session_id===id&&(r.finished_at||taskCardState(r)==='waiting'))
+    if(row){
+      noteTaskNoticeVisit(row); update({...currentFrame,focus:null},false)
     }
   }
   async function open(id,automatic){
@@ -127,8 +128,10 @@ export function agentTaskPanel(ctx,anchor,notice,presentation=()=>null){
     currentFrame=frame
     const candidates=frame.rows.filter(r=>r && /^worker-[a-f0-9]{32}$/.test(r.session_id))
     const id=focusedSession(ctx)
-    if(!document.hidden && document.hasFocus() && visibleTaskRows(candidates).some(r=>r.finished_at && r.session_id===id))
-      noteTaskVisit(id)
+    if(!document.hidden && document.hasFocus()){
+      const selected=candidates.find(r=>r.session_id===id)
+      if(selected)noteTaskNoticeVisit(selected)
+    }
     const rows=visibleTaskRows(candidates)
     const running=rows.filter(r=>active.has(r.state)).length,unread=rows.filter(r=>r.finished_at).length
     const lead=rows.find(r=>r.state==='waiting_user')||rows.find(r=>active.has(r.state))||rows[0]
@@ -149,7 +152,7 @@ export function agentTaskPanel(ctx,anchor,notice,presentation=()=>null){
     for(const r of rows.slice(0,limit)){
       const button=document.createElement('button');button.type='button'
       const label=document.createElement('span');label.textContent=r.name||'未命名任务'
-      button.dataset.taskState=['completed','merged','ready','ended'].includes(r.state)?'completed':['failed'].includes(r.state)?'failed':['stopped','dropped','closed','cancelled'].includes(r.state)?'stopped':['queued','pending','running','progress'].includes(r.state)?'running':'waiting'
+      button.dataset.taskState=taskCardState(r)
       button.title=label.textContent+' · '+(states[r.state]||'状态待确认')
       button.setAttribute('aria-label',button.title)
       button.append(label);button.onclick=()=>void open(r.session_id,false);list.append(button)

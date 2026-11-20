@@ -6,6 +6,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 480, height: 360 } })
   await page.route('http://127.0.0.1:19359/**', async route => {
     const path = new URL(route.request().url()).pathname
+    if(path.endsWith('/work-mode.mjs'))return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/shared/work-mode.mjs',import.meta.url),'utf8')})
     if(path.includes('connection-guidance.mjs'))return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/shared/connection-guidance.mjs',import.meta.url),'utf8')})
     if (path.endsWith('.mjs')) return route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../src/client/'+(path==='/layout.mjs'?'controls-layout':'connection-hint')+'.mjs', import.meta.url), 'utf8') })
     return route.fulfill({ contentType: 'text/html', body: '<div id="sidebar" style="position:absolute;bottom:30px;left:16px;width:200px;overflow:hidden;transform:translateZ(0)"><div id="controls" style="display:flex;align-items:center;gap:4px"><span id="dsh-duet-entry">duet.</span><button data-voice="mic">交互</button><button data-voice="speaker">播报</button></div></div><script type="module">import {mountConnectionHint} from "/hint.mjs"; import {mountControlsLayout} from "/layout.mjs"; window.hint=mountConnectionHint(document.querySelector("#controls"));window.stopLayout=mountControlsLayout(document.querySelector("#controls"));</script>' })
@@ -14,7 +15,8 @@ try {
   await page.clock.install()
   const hint = page.locator('[data-duet-connection-hint]')
   await page.evaluate(()=>{window.hint.dispose();window.shown=[];import('/hint.mjs').then(({mountConnectionHint})=>{
-    window.hint=mountConnectionHint(document.querySelector('#controls'),{onShown:value=>window.shown.push(value)})
+    window.settingsOpened=0
+    window.hint=mountConnectionHint(document.querySelector('#controls'),{onShown:value=>window.shown.push(value),onSettings:()=>window.settingsOpened++})
     window.hintReady=true
   })})
   await page.waitForFunction(()=>window.hintReady)
@@ -61,6 +63,45 @@ try {
   await page.evaluate(()=>window.hint.update({mode:'online',ready:true,guidance:{source:'router',text:'<img src=x onerror=alert(1)>',revision:9}}))
   assert.equal(await hint.innerText(),'连接成功，可以试试对我说“你好”。')
   assert.equal(await hint.locator('img').count(),0)
+  // Only successful agent interaction entries count; repeated draws do not.
+  for(const state of [{mode:'online',ready:false},{mode:'tts_only',ready:true}]){
+    await page.evaluate(s=>window.hint.update({...s,workMode:'agent',connectionId:'not-counted'}),state)
+  }
+  assert.equal(await page.evaluate(()=>localStorage.getItem('dsh.duet.agent-entry-reminders.v1')),null)
+  for(let n=1;n<=11;n++){
+    await update('off',false)
+    const state={mode:'online',ready:true,workMode:'agent',connectionId:'agent-'+n}
+    await page.evaluate(s=>window.hint.update(s),state)
+    assert.equal(await hint.locator('[data-duet-agent-reminder]').isVisible(),n<=10)
+    assert.equal(await hint.getByRole('button',{name:'我知道了',exact:true}).isVisible(),true,'dismiss remains available after the reminder limit')
+    assert.equal(await hint.getByRole('button',{name:'打开设置',exact:true}).isVisible(),n<=10)
+    if(n<=10){
+      assert.equal(await hint.locator('strong').innerText(),'只能')
+      assert.match(await hint.innerText(),/全新工作区和会话/)
+      await page.evaluate(s=>window.hint.update(s),state)
+      assert.equal(await page.evaluate(()=>localStorage.getItem('dsh.duet.agent-entry-reminders.v1')),String(n))
+      if(n===1){
+        assert.equal(await hint.evaluate(e=>getComputedStyle(e).pointerEvents),'auto')
+        assert.equal(await hint.evaluate(e=>getComputedStyle(e).userSelect),'text')
+        await hint.locator('strong').dblclick()
+        assert.match(await page.evaluate(()=>window.getSelection().toString()),/只|能/)
+        assert.equal(await hint.isVisible(),true)
+        await hint.getByRole('button',{name:'打开设置',exact:true}).click()
+        assert.equal(await page.evaluate(()=>window.settingsOpened),1)
+        assert.equal(await hint.isVisible(),false)
+      }
+      if(n===2){
+        await hint.getByRole('button',{name:'我知道了',exact:true}).click()
+        assert.equal(await hint.isVisible(),false)
+        assert.equal(await page.evaluate(()=>window.settingsOpened),1)
+        await page.evaluate(s=>window.hint.update(s),state)
+        assert.equal(await hint.isVisible(),false)
+      }
+    }
+  }
+  await page.reload();await page.waitForFunction(()=>!!window.hint)
+  await page.evaluate(()=>window.hint.update({mode:'online',ready:true,workMode:'agent',connectionId:'after-reload'}))
+  assert.equal(await hint.locator('[data-duet-agent-reminder]').isVisible(),false)
   await page.evaluate(() => {window.hint.dispose();window.stopLayout()}); assert.equal(await hint.count(), 0)
   console.log('Connection hint: ready-only, online-only, once per connection, timeout, escape, mode switch, teaching suppression, disposal passed')
 } finally { await browser.close() }

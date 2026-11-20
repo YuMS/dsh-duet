@@ -1,28 +1,29 @@
-import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.3.0'
-import { DuetAudio, AUDIO_STOP_PROTOCOL } from './audio.mjs?v=0.3.0'
-import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.3.0'
-import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.3.0'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.3.0'
-import { mountTutorial } from './tutorial.mjs?v=0.3.0'
+import { DuetState, PLUGIN_VERSION } from '../shared/state.mjs?v=0.3.1'
+import { DuetAudio, AUDIO_STOP_PROTOCOL } from './audio.mjs?v=0.3.1'
+import { HarnessRPCExecutor, rpcNavigationSession } from './rpc.mjs?v=0.3.1'
+import { composerAccess, observeComposer, focusedSession, openLocalSession } from './composer.mjs?v=0.3.1'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.3.1'
+import { mountTutorial } from './tutorial.mjs?v=0.3.1'
 import { mountAvatarTasks } from './avatar-tasks.mjs'
-import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.3.0'
-import { mountRating } from './feedback.mjs?v=0.3.0'
-import { createAudioUploadConsent } from './consent.mjs?v=0.3.0'
-import { bindDuetShortcuts } from './shortcuts.mjs?v=0.3.0'
-import { nativeInteractions } from './interactions.mjs?v=0.3.0'
-import { mountConnectionHint } from './connection-hint.mjs?v=0.3.0'
-import { mountControlsLayout } from './controls-layout.mjs?v=0.3.0'
-import { mountNotice } from './notice.mjs?v=0.3.0'
-import { browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.3.0'
+import { tutorialAdapter } from './tutorial-adapter.mjs?v=0.3.1'
+import { mountRating } from './feedback.mjs?v=0.3.1'
+import { createAudioUploadConsent } from './consent.mjs?v=0.3.1'
+import { bindDuetShortcuts } from './shortcuts.mjs?v=0.3.1'
+import { nativeInteractions } from './interactions.mjs?v=0.3.1'
+import { mountConnectionHint } from './connection-hint.mjs?v=0.3.1'
+import { mountControlsLayout } from './controls-layout.mjs?v=0.3.1'
+import { mountNotice } from './notice.mjs?v=0.3.1'
+import { browserSessionCatalog, sessionCreationPayload } from './workspaces.mjs?v=0.3.1'
 import { workModeOnboarding } from './work-mode.mjs'
+import { agentEntryNavigation } from './agent-entry.mjs'
 import { workModeIssue, noteTaskVisit } from '../shared/work-mode.mjs'
-import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.3.0'
-import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.3.0'
-import { sessionLabel } from '../shared/catalog.mjs?v=0.3.0'
-import { resultNotification } from '../shared/result-notification.mjs?v=0.3.0'
-import { HarnessSync } from './harness-sync.mjs?v=0.3.0'
-import { LocalSync } from './local-sync.mjs?v=0.3.0'
-import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.3.0'
+import { voiceSocketUrl, bindSettingsLink } from './transport.mjs?v=0.3.1'
+import { identityFetch, identityVoiceProtocols } from './identity.mjs?v=0.3.1'
+import { sessionLabel } from '../shared/catalog.mjs?v=0.3.1'
+import { resultNotification } from '../shared/result-notification.mjs?v=0.3.1'
+import { HarnessSync } from './harness-sync.mjs?v=0.3.1'
+import { LocalSync } from './local-sync.mjs?v=0.3.1'
+import { diagnosticPayload } from '../shared/diagnostics.mjs?v=0.3.1'
 import { mountAvatar } from './avatar.mjs'
 import { mountAvatarSurfaces } from './avatar-surfaces.mjs'
 import { audioUnlockPanel } from '../shared/avatar-ui.mjs'
@@ -41,7 +42,7 @@ export function mountDuet(ctx) {
   const resultResume = {}
   let localSync,avatarTasks,closeMenuSettings
   let clientTraceId = null, diagnosticCount = 0
-  let connectionGuidance = null, reportHintShown = null
+  let connectionGuidance = null, reportHintShown = null, connectionWorkMode = null
   let tutorial, teaching, ratingPanel, connectionHint, stopControlsLayout, stopSettings, avatar
   const modeActions=new Map()
   let unlockPanel
@@ -86,12 +87,13 @@ export function mountDuet(ctx) {
     const mark = controls.querySelector('[data-duet-mark]')
     mark.style.color = state.ready ? '#7fd6a6' : '#ed9b35'
     mark.title = state.ready ? '语音已连接' : '语音未连接'
-    connectionHint?.update({ mode: state.mode, ready: state.ready, teaching: Boolean(tutorial?.active), guidance:connectionGuidance })
+    connectionHint?.update({ mode: state.mode, ready: state.ready, teaching: Boolean(tutorial?.active), guidance:connectionGuidance,
+      workMode:connectionWorkMode,connectionId:clientTraceId })
   }
   const connect = (mode, receive) => {
     if (!audioConsent.granted()) throw Error('data_upload_consent_required')
     clientTraceId = crypto.randomUUID(); diagnosticCount = 0
-    connectionGuidance = null; reportHintShown = null
+    connectionGuidance = null; reportHintShown = null; connectionWorkMode = null
     const connectionTraceId = clientTraceId
     const started = performance.now()
     let firstInput = false
@@ -106,6 +108,8 @@ export function mountDuet(ctx) {
     }
     let ws, closed = false, release, ready = false, stopComposer, stopBridge, agentMode = false
     const opening = new AbortController()
+    let autoSwitchSession=true
+    const agentEntry=agentEntryNavigation(ctx,opening.signal,()=>autoSwitchSession)
     const startupTimer = setTimeout(() => {
       if (!closed) receive({ type: 'error', code: 'voice_start_timeout' })
     }, 45000)
@@ -191,7 +195,9 @@ export function mountDuet(ctx) {
       const issue = workModeIssue(configuration)
       if(issue){void workMode.show();throw Error(issue)}
       agentMode = configuration.work_mode === 'agent'
+      autoSwitchSession = configuration.agent_options?.auto_switch_session !== false
       if(closed)return
+      connectionWorkMode=agentMode?'agent':'direct'
       if (mode === 'online' && !agentMode) stopBridge = startComposerBridge(ctx, connectionTraceId, fetch, localSync,
         (text,id)=>avatar?.inputWritten(text,id))
       ws = new WebSocket(voiceSocketUrl({ mode, plugin_version: PLUGIN_VERSION, client_trace_id: connectionTraceId, page_id: pageId }), identityVoiceProtocols())
@@ -206,11 +212,12 @@ export function mountDuet(ctx) {
         try {
           message = JSON.parse(event.data)
           if(message.type==='duet.local.tasks'){
+            if(agentMode&&mode==='online')agentEntry.frame(message)
             if(agentMode)try{
               const {agentTaskPanel}=await import('./agent-tasks.mjs')
               if(closed||disposed)return
               agentTasks??=agentTaskPanel(ctx,()=>controls,text=>notice(text),()=>avatar?.presentation())
-              agentTasks.update(message,mode==='online'||message.focus_reason==='result')
+              agentTasks.update(message,autoSwitchSession&&(mode==='online'||message.focus_reason==='result'))
             }catch{/* A missing presentation module must not stop the voice connection. */}
             return
           }
@@ -267,6 +274,7 @@ export function mountDuet(ctx) {
             if (!closed) {
               clearTimeout(startupTimer)
               receive({ type: 'ready' })
+              if(agentMode&&mode==='online')agentEntry.connected()
               try { audio.connectedChime() } catch { /* A notification must not break voice. */ }
             }
           }
@@ -399,7 +407,7 @@ export function mountDuet(ctx) {
     stopControlsLayout?.()
     stopControlsLayout = mountControlsLayout(controls)
     connectionHint?.dispose()
-    connectionHint = mountConnectionHint(controls,{onShown:hint=>reportHintShown?.(hint)})
+    connectionHint = mountConnectionHint(controls,{onShown:hint=>reportHintShown?.(hint),onSettings:()=>settings.click()})
     draw(state)
     avatar?.syncToggle()
   }

@@ -116,7 +116,8 @@ test('idle plugin pages register no global focus or composer synchronization', (
   let client; const effects = []
   vm.runInNewContext(entrySource, { window: {__ModuleLoader__: {load: d => {client = d.factory()}}} })
   client.apply({effect: (_fn, label) => effects.push(label)})
-  assert.equal(effects.length, 2)
+  assert.equal(effects.length, 3)
+  assert.ok(effects.includes('duet-client: task navigation cards'))
   assert.ok(effects.every(label => !/focus|composer/.test(label)))
   assert.ok(!entrySource.includes('BroadcastChannel'))
 })

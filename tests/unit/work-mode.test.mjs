@@ -49,8 +49,10 @@ test('upgrades require a choice, even though the retained work mode is direct',a
 })
 
 test('short copy and model options have a single canonical definition',()=>{
-  assert.deepEqual(Object.values(WORK_MODES).map(x=>x.name),['输入模式','代理模式'])
-  assert.deepEqual(agentOptions(),{workspace_id:null,executor_model:null,manager_model:null})
+  assert.deepEqual(Object.values(WORK_MODES).map(x=>x.name),['输入模式（传统）','代理模式'])
+  assert.deepEqual(agentOptions(),{workspace_id:null,executor_model:null,manager_model:null,auto_switch_session:true})
+  assert.equal(agentOptions({auto_switch_session:false}).auto_switch_session,false)
+  assert.throws(()=>agentOptions({auto_switch_session:'false'}),/invalid_agent_auto_switch/)
   assert.throws(()=>agentOptions({executor_model:{provider:'x',model:'m',apiKey:'secret'}}),/invalid_agent_model/)
   assert.throws(()=>agentOptions({workspace_id:'',manager_model:null}),/invalid_agent_workspace/)
 })

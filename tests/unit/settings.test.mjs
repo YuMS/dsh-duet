@@ -12,10 +12,12 @@ import { normalizeNickname, NICKNAME_LIMIT } from '../../src/shared/nickname.mjs
 test('work mode defaults direct and survives URL and nickname changes', async t => {
   const s=await fixture(t)
   assert.equal(s.public().work_mode,'direct')
-  await s.save({backend_url:s.public().backend_url,work_mode:'agent',agent_permission:true,agent_options:{workspace_id:'project'},revision:s.revision})
+  assert.equal(s.public().agent_options.auto_switch_session,true)
+  await s.save({backend_url:s.public().backend_url,work_mode:'agent',agent_permission:true,agent_options:{workspace_id:'project',auto_switch_session:false},revision:s.revision})
   await s.renameNickname('沐沐')
   await s.save({backend_url:'https://custom.example/',revision:s.revision})
   assert.equal(new DuetSettings(s.base,{path:s.path}).public().work_mode,'agent')
+  assert.equal(new DuetSettings(s.base,{path:s.path}).public().agent_options.auto_switch_session,false)
   await assert.rejects(s.save({backend_url:s.public().backend_url,work_mode:'other',revision:s.revision}),/invalid_work_mode/)
   await s.save({backend_url:s.public().backend_url,work_mode:'direct',revision:s.revision})
   assert.equal(s.public().work_mode,'direct')

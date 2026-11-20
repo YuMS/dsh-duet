@@ -10,7 +10,7 @@ try {
     const errors = [], calls = []
     const config = { debug, feedback_enabled:true, revision: 0, backend_url: 'ws://127.0.0.1:28925/ws?protocol=realtime_v2', auth_configured: false, insecure_transport:true, token_placeholder: '请输入访问密钥', connection: { online: 0, tts_only: 0 } }
     const feedback=[]
-    let configUnavailable = false
+    let configUnavailable = false, noticesEmpty=false
     await page.addInitScript(() => {
       window.micRequests = 0
       window.micDevices = [{kind:'audioinput',deviceId:'default',label:'默认'}, {kind:'audioinput',deviceId:'usb',label:'USB 麦克风'}, {kind:'audioinput',deviceId:'built-in',label:'内置麦克风'}]
@@ -58,7 +58,7 @@ try {
         }
         json = config
       } else if (path.endsWith('/announcements')) {
-        json = { status: 'ok', items: [{ title: '服务通知', body: '<script>window.pwned=true</script>', level: 'info', published_at: '2026-09-14T00:00:00Z' }] }
+        json = { status: 'ok', items: noticesEmpty?[]:[{ title: '服务通知', body: '<script>window.pwned=true</script>', level: 'info', published_at: '2026-09-14T00:00:00Z' }] }
       } else if (path.endsWith('/health')) json = { browser_client_connected: true, browser_focus_matches:false, browser_client_last_seen_at:Date.now()/1000 }
       else if (path.endsWith('/sessions')) json = { sessions: [] }
       else if (path.endsWith('/jobs')) json = { jobs: [] }
@@ -103,6 +103,18 @@ try {
     assert.equal(config.work_mode,'agent')
     assert.equal(config.agent_options.workspace_id,'project')
     assert.equal(config.agent_options.executor_model.model,'model')
+    for(const width of [1280,768,390]){
+      await page.setViewportSize({width,height:900})
+      const geometry=await page.evaluate(()=>{
+        const a=document.querySelector('.auto-toggle').getBoundingClientRect(),b=document.querySelector('.auto-copy').getBoundingClientRect()
+        return {overflow:document.documentElement.scrollWidth>innerWidth,gap:b.left-a.right,width:a.width}
+      })
+      assert.equal(geometry.overflow,false)
+      assert.equal(geometry.width,40);assert.ok(geometry.gap>=8&&geometry.gap<=16)
+    }
+    await page.getByRole('link',{name:'意见反馈',exact:true}).click()
+    assert.ok(await page.locator('#feedback-settings').evaluate(e=>location.hash==='#feedback-settings'&&e.getBoundingClientRect().top<innerHeight-100))
+    await page.setViewportSize({width:1280,height:900})
     await page.locator('[data-work-mode=direct]').click()
     await page.waitForFunction(()=>document.querySelector('[data-work-mode=direct]').getAttribute('aria-pressed')==='true')
     assert.equal(config.work_mode,'direct')
@@ -201,6 +213,9 @@ try {
     assert.equal(calls.some(([, p]) => p.endsWith('/sessions')), debug)
     assert.equal(calls.some(([, p]) => p.endsWith('/jobs')), debug)
     assert.match(await page.locator('#announcements').textContent(), /<script>/)
+    assert.equal(await page.locator('.settings-nav a[href="#news-settings"],.settings-nav a[href="#connection-settings"]').count(),0)
+    assert.equal(await page.locator('#news-settings').isVisible(),true)
+    assert.ok(await page.evaluate(()=>document.getElementById('news-settings').nextElementSibling.id==='connection-settings'))
     assert.equal(await page.evaluate(() => window.pwned), undefined)
     assert.equal(await page.locator('#backendUrl').isVisible(), false)
     {
@@ -214,7 +229,7 @@ try {
     console.log(`debug=${debug}: visibility, polling, URL-only save, no token input, plain-text announcements passed`)
     const beforePreview=config.revision
     await page.goto('http://localhost:19200/duet/?preview=work-mode')
-    await preview.getByRole('button',{name:/输入模式/}).click()
+    await preview.locator('[data-work-mode=direct]').click()
     assert.equal(await preview.locator('[data-work-mode=direct]').getAttribute('aria-pressed'),'true')
     await preview.getByRole('button',{name:'确定',exact:true}).click()
     await preview.waitFor({state:'detached'})
@@ -222,6 +237,10 @@ try {
     await page.goto('http://localhost:19200/duet/?preview=work-mode')
     await preview.getByRole('button',{name:'退出预览'}).click()
     assert.equal(await page.evaluate(()=>sessionStorage.getItem('dsh.duet.defer-work-mode.v1')),null)
+    noticesEmpty=true
+    await page.goto('http://localhost:19200/duet/')
+    await page.waitForFunction(()=>document.getElementById('pluginVersion').textContent!=='检查中')
+    assert.equal(await page.locator('#news-settings').isVisible(),false)
     await page.close()
   }
 } finally { await browser.close() }

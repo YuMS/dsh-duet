@@ -26,6 +26,8 @@ const modules = {
   avatar_menu: 'shared/avatar-menu', avatar_menu_ui: 'shared/avatar-menu-ui',
   avatar_tasks: 'client/avatar-tasks',
   agent_tasks: 'client/agent-tasks',
+  agent_entry: 'client/agent-entry',
+  agent_tool_views: 'client/agent-tool-views',
   avatar_surface: 'shared/avatar-surface', avatar_surfaces: 'client/avatar-surfaces',
   input_effect: 'client/input-effect',
 }

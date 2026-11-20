@@ -1,5 +1,5 @@
 /** Composer requests belong to one explicit voice/tutorial connection, never all tabs. */
-import { focusedSession as currentSession } from './composer.mjs?v=0.3.0'
+import { focusedSession as currentSession } from './composer.mjs?v=0.3.1'
 
 export function startComposerBridge(ctx, clientId, fetchImpl = fetch, feed = null, onWrite = () => {}) {
   const focusedSession = () => currentSession(ctx)

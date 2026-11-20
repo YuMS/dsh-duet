@@ -71,7 +71,11 @@ export class AgentConnection {
     if(!this.present||this.closed||!this.source?.taskRows)return
     // Presentation failure must never affect voice delivery.
     try{
-      const rows=this.source.taskRows()
+      const rows=this.source.taskRows().map(row=>{
+        // Local notification identity; never send native ticket metadata upstream.
+        const ticket=this.source.runtime?.store?.tickets?.get?.(row.session_id?.replace(/^worker-/,''))
+        return ticket?.attention?.id?{...row,attention_id:ticket.attention.id}:row
+      })
       const key=r=>r.task_id+':'+r.run_id
       for(const r of rows)if(r.run_id && !r.finished_at && this.previousFinished?.has(key(r)))
         this.focusedResults.delete(key(r))
@@ -91,6 +95,7 @@ export class AgentConnection {
       if(serialized!==this.lastRows||focus){
         if(focus)this.traceLab('view.focus_requested',{session_id:focus,reason:completed?'result':'acknowledgement'})
         this.present({type:'duet.local.tasks',rows,focus:focus||null,
+          main_session_id:this.source.runtime?.masterId||null,
           ...(completed?{focus_reason:'result'}:{})});this.lastRows=serialized
       }
     }catch{/* Optional local view. */}

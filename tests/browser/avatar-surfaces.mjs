@@ -171,6 +171,22 @@ try {
   consent.cancel();confirm.cancel();rating.dispose();manager.sync();manager.dispose()
  })
 
+ await page.evaluate(async()=>{
+   document.querySelectorAll('[data-duet-avatar-surface]').forEach(node=>node.remove())
+   const {mountConnectionHint}=await import('/src/client/connection-hint.mjs')
+   const {mountAvatarSurfaces}=await import('/src/client/avatar-surfaces.mjs')
+   const rows=[],manager=mountAvatarSurfaces({avatar:()=>({presentation:()=>({native:true}),surface:m=>rows.push(m)})})
+   localStorage.setItem('dsh.duet.agent-entry-reminders.v1','10')
+   const hint=mountConnectionHint(document.getElementById('avatar'))
+   hint.update({mode:'online',ready:true,workMode:'agent',connectionId:'dismiss-after-ten'})
+   manager.sync()
+   const panel=rows.at(-1).panel,ack=panel.nodes.find(n=>n.kind==='button'&&n.text==='我知道了')
+   if(!ack)throw Error('native hint lost dismiss action')
+   if(panel.nodes.some(n=>n.kind==='button'&&n.text==='打开设置'))throw Error('hidden reminder leaked')
+   manager.action({type:'surface_action',id:panel.id,revision:panel.revision,action:ack.action})
+   if(!document.querySelector('[data-duet-connection-hint]').hidden)throw Error('native dismiss did not close hint')
+   hint.dispose();manager.dispose()
+ })
  assert.deepEqual(errors,[])
  console.log('Avatar surfaces: web anchoring, native mirroring, gesture guard, consent, stale-action fencing and fallback passed')
 } finally {await browser.close()}

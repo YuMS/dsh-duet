@@ -5,63 +5,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>duet · DeepSeek Harness</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, "PingFang SC", sans-serif; }
-    [hidden] { display: none !important; }
-    body { margin: 0; background: #101514; color: #e5eeeb; }
-    main { max-width: 900px; margin: 0 auto; padding: 64px 28px; }
-    h1 { margin: 0 0 6px; font-size: 28px; }
-    .sub { color: #91a0c5; margin-bottom: 22px; }
-    .layout { display: grid; grid-template-columns: 310px 1fr; gap: 18px; }
-    .panel { background: #131a2e; border: 1px solid #273252; border-radius: 14px; padding: 16px; }
-    h2 { font-size: 16px; margin: 0 0 12px; }
-    input, textarea, select, button { box-sizing: border-box; width: 100%; font: inherit; }
-    input, textarea, select { background: #0d1428; color: #e8edff; border: 1px solid #334266; border-radius: 9px; padding: 10px; }
-    textarea { min-height: 130px; resize: vertical; }
-    textarea.compact { min-height: 92px; }
-    button { cursor: pointer; border: 0; border-radius: 9px; padding: 10px 12px; background: #5b7cff; color: white; font-weight: 650; }
-    button.secondary { background: #273552; }
-    .row { display: flex; gap: 8px; margin-top: 9px; }
-    .session { border: 1px solid #2a3657; border-radius: 10px; padding: 10px; margin: 8px 0; }
-    .session.active { border-color: #6d8aff; background: #192548; }
-    .session strong { display: block; }
-    .session-main { cursor: pointer; }
-    .session-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 9px; }
-    .session-actions button { padding: 6px 7px; font-size: 12px; background: #273552; }
-    .session-actions button.archive { color: #ffc1ca; }
-    .muted { color: #91a0c5; font-size: 12px; }
-    .job { border-top: 1px solid #293554; padding: 13px 0; }
-    .job:first-child { border-top: 0; }
-    .status { display: inline-block; padding: 3px 7px; border-radius: 999px; background: #293554; font-size: 12px; }
-    .status.succeeded { background: #164c38; color: #9bf0c9; }
-    .status.failed { background: #5a2430; color: #ffb3bf; }
-    .task, .result { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 7px; }
-    .result { background: #0d1428; border-radius: 8px; padding: 10px; }
-    #message { min-height: 20px; color: #9fb1df; margin: 10px 0; }
-    #composerMessage { min-height: 20px; color: #9fb1df; margin: 10px 0 0; }
-    .connection { display: flex; align-items: center; gap: 10px; margin: 0 0 18px; padding: 11px 13px; border: 1px solid #334266; border-radius: 11px; background: #111a31; }
-    .connection-title { font-weight: 700; }
-    .connection-detail { color: #91a0c5; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
-    @media (max-width: 780px) { .layout { grid-template-columns: 1fr; } }
-    .eyebrow { color:#96b4a7;font-size:11px;letter-spacing:2.5px;margin-bottom:15px;font-weight:650 }
-    h1 { font-size:52px;letter-spacing:-2px;line-height:1.1 }
-    .sub { color:#91a79e;line-height:1.8;margin:18px 0 30px;max-width:560px }
-    .panel { background:#191f1d;border-color:#303d36;border-radius:18px;padding:26px }
-    .connection { background:#161e1a;border-color:#334239;padding:18px;border-radius:14px }
-    .connection-detail,.muted { color:#93a79e;line-height:1.7 }
-    .cards { display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 28px }
-    .metric { border:1px solid #334239;border-radius:12px;padding:18px;background:#141a17 }
-    .metric small { color:#91a79e;display:block;margin-bottom:9px }
-    .metric strong { font-size:16px;font-weight:550 }
-    input,textarea,select { background:#111814;border-color:#3c4c42;color:#e5eeeb }
-    label { display:block;margin:18px 0 8px;font-size:13px;color:#b8c9bf }
-    button { background:#b3e9cb;color:#152a1e }
-    button.secondary { background:#2c3b33;color:#dcebe3 }
-    details { border-top:1px solid #303d36;margin-top:24px;padding-top:20px }
-    summary { cursor:pointer;color:#c2d6c9;font-size:13px;user-select:none }
-    #saveDuet { width:auto;min-width:150px;margin-top:12px }
-    .section-note { color:#92a69b;font-size:13px;line-height:1.8;margin:0 0 18px }
-    footer { font-size:12px;color:#71867a;display:flex;justify-content:space-between;margin-top:28px }
-    @media(max-width:600px) { main{padding:32px 18px}.cards{grid-template-columns:1fr}.panel{padding:20px}h1{font-size:42px} }
+    :root{color-scheme:dark;font-family:Inter,"PingFang SC",system-ui,sans-serif;--bg:#101614;--panel:#18201c;--input:#121a16;--line:#2c3c32;--text:#e5eee8;--muted:#a2b4a8;--accent:#b3e9cb}
+    *{box-sizing:border-box}[hidden]{display:none!important}
+    body{margin:0;background:radial-gradient(ellipse at 20% 0%,#1e332855,transparent 600px),var(--bg);color:var(--text);font-size:14px;line-height:1.6}
+    main{max-width:1110px;margin:auto;padding:48px 32px}
+    .eyebrow{font-size:10px;font-weight:650;letter-spacing:2.8px;color:var(--muted);margin-bottom:12px}
+    h1{margin:0;font-size:52px;font-weight:750;letter-spacing:-2px;line-height:1.05}
+    #duetMark{display:inline-block;width:9px;height:9px;margin-left:4px;border-radius:50%;font-size:0;background:currentColor}
+    .sub{margin:14px 0 30px;color:var(--muted);font-size:15px}
+    .settings-shell{display:grid;grid-template-columns:158px minmax(0,1fr);gap:32px;align-items:start}
+    .settings-nav{position:sticky;top:24px;display:grid;gap:4px;padding-top:8px}
+    .settings-nav a{color:var(--muted);text-decoration:none;padding:9px 12px;border-radius:9px;font-size:13px;transition:background .15s,color .15s}
+    .settings-nav a:hover,.settings-nav a[aria-current=true]{background:#b3e9cb10;color:var(--accent)}
+    .settings-nav small{color:#82998a;font-size:10px;letter-spacing:1.5px;padding:12px;margin-bottom:2px}
+    .settings-content{min-width:0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:28px;scroll-margin-top:24px;box-shadow:0 4px 20px #00000008}
+    h2{margin:0 0 18px;font-size:17px;font-weight:650;letter-spacing:-.3px}h3{font-weight:600}
+    .section-note,.muted{color:var(--muted);font-size:12px;line-height:1.75}.section-note{margin:8px 0 18px}
+    input,textarea,select,button{font:inherit;max-width:100%}
+    input,textarea,select{width:100%;color:var(--text);background:var(--input);border:1px solid #3a4c40;border-radius:10px;padding:10px 12px;outline:none}
+    input:hover,textarea:hover,select:hover{border-color:#647e6d}
+    input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px #b3e9cb14}
+    label{display:block;font-size:13px;color:#c2d0c7;margin:16px 0 8px}
+    textarea{min-height:130px;resize:vertical}.compact{min-height:92px}
+    button{width:auto;min-height:38px;border:1px solid transparent;border-radius:10px;padding:8px 16px;color:#12281b;background:var(--accent);font-weight:600;font-size:13px;cursor:pointer;transition:filter .15s}
+    button:hover:not(:disabled){filter:brightness(1.09)}button:disabled{opacity:.5;cursor:default}
+    button.secondary{color:var(--text);background:#25362c;border-color:#3b4e41}
+    :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+    input[type=checkbox]{width:34px!important;height:20px;appearance:none;display:inline-block;vertical-align:middle;margin:0 10px 0 0;padding:0;background:#415047;border:1px solid #4e6054;border-radius:20px;cursor:pointer;position:relative}
+    input[type=checkbox]::after{content:'';position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#e5eee8;transition:transform .15s}
+    input[type=checkbox]:checked{background:#80b294;border-color:#80b294}input[type=checkbox]:checked::after{transform:translateX(14px)}
+    .row{display:flex;gap:10px;margin-top:10px;align-items:center}.row input{flex:1;min-width:0}.row button{flex-shrink:0}
+    .connection{display:flex;align-items:center;gap:10px;margin:0 0 18px;padding:14px 18px;border:1px solid var(--line);border-radius:14px;background:#142119}
+    .connection-title{font-size:13px;font-weight:600}.connection-detail{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+    .cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 24px;margin:16px 0 20px}
+    .metric{min-width:0}.metric small{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}.metric strong{font-size:14px!important;font-weight:550;overflow-wrap:anywhere}
+    details{border-top:1px solid var(--line);padding-top:16px;margin-top:22px}
+    summary{cursor:pointer;color:#c2d6c9;font-size:13px;user-select:none}details[open]>summary{margin-bottom:14px}
+    [role=status]{font-size:12px;overflow-wrap:anywhere}[role=status]:empty{display:none}
+    #assistantNickname{max-width:360px}#submitFeedback{margin-top:12px}#saveDuet{margin-top:0}
+    footer{font-size:11px;color:#82998a;margin:28px 0 0}
+    .layout{display:grid;grid-template-columns:310px 1fr;gap:18px}.session{border:1px solid var(--line);padding:12px;margin:8px 0;border-radius:10px}.session.active{background:#243e2e}.session strong{display:block}.session-main{cursor:pointer}.session-actions{display:flex;gap:6px;margin-top:9px}.session-actions button{font-size:12px;padding:5px}.job{border-top:1px solid var(--line);padding:12px 0}.status{font-size:12px;padding:3px 8px;border-radius:20px;background:#344339}.status.failed{color:#ffb3bf}.status.succeeded{color:#9bf0c9}.task,.result{white-space:pre-wrap;overflow-wrap:anywhere}.result{background:var(--input);padding:10px;border-radius:8px}
+    @media(max-width:760px){main{padding:30px 18px}.settings-shell{grid-template-columns:1fr;gap:20px}.settings-nav{position:static;display:flex;flex-wrap:wrap;gap:4px;padding:0}.settings-nav small{display:none}.settings-nav a{padding:7px 10px}.panel{padding:22px}.layout{grid-template-columns:1fr}}
+    @media(max-width:440px){main{padding:24px 12px}.panel{padding:18px;border-radius:16px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}h1{font-size:44px}}
   </style>
 </head>
 <body>
@@ -69,12 +54,23 @@
   <div class="eyebrow">DEEPSEEK HARNESS</div>
   <h1>duet<span id="duetMark" style="color:#ed9b35">.</span></h1>
   <div class="sub">用声音控制dsh，让工作变得更自由。</div>
+  <div class="settings-shell">
+  <nav class="settings-nav" aria-label="设置分组">
+    <small>偏好设置</small>
+    <a href="#work-settings">工作方式</a><a href="#nickname-settings">助手昵称</a><a href="#voice-settings">音色</a><a href="#avatar-settings">3D 形象</a><a href="#microphone-settings">麦克风</a><a href="#shortcut-settings">快捷键</a>
+    <small>服务与帮助</small>
+    <a href="#tutorial-settings">使用教学</a><a href="#feedback-settings">意见反馈</a>
+  </nav>
+  <div class="settings-content">
   <div class="connection" id="connectionStatus">
     <div><div class="connection-title" id="connectionTitle">正在读取连接状态</div><div class="connection-detail" id="connectionDetail"></div></div>
   </div>
-  <section class="panel" style="margin-bottom:18px">
-    <h2>连接概览</h2>
-    <p class="section-note">选择一种语音模式，点击当前模式即可关闭。</p>
+  <section class="panel" id="news-settings" style="margin-bottom:18px" hidden>
+    <h2>服务动态</h2>
+    <div id="announcements" aria-live="polite" class="muted"></div>
+  </section>
+  <section class="panel" id="connection-settings" style="margin-bottom:18px">
+    <h2>连接与版本</h2>
     <div class="cards">
       <div class="metric"><small>当前模式</small><strong id="duetConnection">读取中</strong></div>
       <div class="metric"><small>服务配置</small><strong id="authState">检查中</strong></div>
@@ -89,13 +85,13 @@
     <div id="settingsMessage" role="status" style="margin-top:10px"></div>
     </details>
   </section>
-  <section class="panel" style="margin-bottom:18px">
-    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px">
+  <section class="panel" id="work-settings" style="margin-bottom:18px">
+    <div style="margin-bottom:18px">
       <h2 style="margin:0">工作方式</h2>
     </div>
     <div id="workModeSettings">正在读取工作方式…</div>
   </section>
-  <section class="panel" style="margin-bottom:18px">
+  <section class="panel" id="nickname-settings" style="margin-bottom:18px">
     <h2>助手昵称</h2>
     <label for="assistantNickname">给助手起个名字</label>
     <input id="assistantNickname" type="text" placeholder="duet" autocomplete="off">
@@ -103,7 +99,7 @@
     <button id="saveNickname" type="button" disabled>保存昵称</button>
     <p id="nicknameStatus" class="muted" role="status" aria-live="polite"></p>
   </section>
-  <section class="panel" style="margin-bottom:18px">
+  <section class="panel" id="voice-settings" style="margin-bottom:18px">
     <h2>音色</h2>
     <div id="duetVoices">
       <p data-availability role="status" hidden></p>
@@ -145,7 +141,7 @@
       <p data-status role="status" aria-live="polite"></p>
     </div>
   </section>
-  <section class="panel" style="margin-bottom:18px">
+  <section class="panel" id="avatar-settings" style="margin-bottom:18px">
     <h2>3D 形象</h2>
     <label><input id="avatarEnabled" type="checkbox" style="width:auto"> 打开3D形象（实验）</label>
     <label><input id="avatarWebOnly" type="checkbox" style="width:auto"> 仅在网页端显示（适用于dsh装在服务器）</label>
@@ -156,14 +152,14 @@
     <button id="avatarRetryDesktop" type="button" hidden>重试桌面显示</button>
     <p id="avatarSettingsStatus" class="muted" role="status"></p>
   </section>
-  <section class="panel" style="margin-bottom:18px">
+  <section class="panel" id="microphone-settings" style="margin-bottom:18px">
     <h2>麦克风</h2>
     <label for="microphoneDevice">交互模式使用的设备</label>
     <select id="microphoneDevice" disabled><option value="">系统默认麦克风</option></select>
     <div class="row"><button id="refreshMicrophones" class="secondary" type="button" style="width:auto">刷新设备</button></div>
     <p id="microphoneStatus" class="muted" role="status" aria-live="polite"></p>
   </section>
-  <section class="panel" style="margin-bottom:18px">
+  <section class="panel" id="shortcut-settings" style="margin-bottom:18px">
     <h2>快捷键</h2>
     <p class="section-note">在 DSH 页面中切换语音模式。留空则不启用，建议避开浏览器已有的快捷键。</p>
     <label for="speakerShortcut">播报模式</label>
@@ -172,16 +168,12 @@
     <div class="row"><input id="micShortcut" readonly placeholder="点击后按下组合键" autocomplete="off"><button id="clearMicShortcut" type="button" class="secondary" style="width:auto">清除</button></div>
     <p id="shortcutStatus" class="muted" role="status" aria-live="polite"></p>
   </section>
-  <section class="panel" style="margin-bottom:18px">
-    <h2>服务动态</h2>
-    <div id="announcements" aria-live="polite" class="muted">正在获取服务通知……</div>
-  </section>
-  <section class="panel" style="margin-bottom:18px">
+  <section class="panel" id="tutorial-settings" style="margin-bottom:18px">
     <h2>使用教学</h2><p class="section-note">跟着语音演示，了解播报、输入、修改和切换会话。</p>
     <button id="openTutorial" type="button">打开教学</button>
     <p id="tutorialStatus" role="status" aria-live="polite" class="muted"></p>
   </section>
-  <section class="panel" style="margin-bottom:18px">
+  <section class="panel" id="feedback-settings" style="margin-bottom:18px">
     <h2>意见反馈</h2><p class="section-note">告诉我们哪里不好用，或你希望增加什么功能。请勿填写密码、密钥等敏感信息。</p>
     <label for="feedbackText">你的反馈</label>
     <textarea id="feedbackText" maxlength="5000" placeholder="描述你的体验或建议……"></textarea>
@@ -217,8 +209,18 @@
     </section>
   </div>
   <footer><span>duet / DeepSeek Harness</span></footer>
+  </div></div>
 </main>
 <script type="module">
+  const navLinks=[...document.querySelectorAll('.settings-nav a')];
+  const highlightSection=()=>{
+    const sections=navLinks.map(link=>document.querySelector(link.hash)).filter(Boolean).sort((a,b)=>a.offsetTop-b.offsetTop);
+    const active=sections.filter(section=>section.getBoundingClientRect().top<=100).at(-1)||sections[0];
+    for(const link of navLinks)link.setAttribute('aria-current',String(link.hash==='#'+active?.id));
+  };
+  let navFrame=0;
+  window.addEventListener('scroll',()=>{if(!navFrame)navFrame=requestAnimationFrame(()=>{navFrame=0;highlightSection();});},{passive:true});
+  highlightSection();
   import { AVATAR_KEY, AVATAR_PRESENTATION_LABELS, avatarPreferences, saveAvatarPreferences } from '/duet/assets/shared/avatar.mjs';
   import { sizeButton, nextAvatarSize, avatarCloseConfirmation } from '/duet/assets/shared/avatar-ui.mjs';
   const avatarConfirm=avatarCloseConfirmation();
@@ -250,7 +252,7 @@
     if(enabled||await avatarConfirm.ask())avatarSave({enabled});
   };
   window.addEventListener('pagehide',()=>{avatarConfirm.dispose();avatarChannel?.close();window.removeEventListener('storage',avatarStorage);},{once:true});
-  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.3.0';
+  import { identityFetch } from '/duet/assets/client/identity.mjs?v=0.3.1';
   import { mountWorkMode, workModeOnboarding } from '/duet/assets/client/work-mode.mjs';
   const modePreview=workModeOnboarding(undefined,{preview:true});
   let previewRequested=new URL(location.href).searchParams.get('preview')==='work-mode';
@@ -474,11 +476,12 @@
   };
   async function loadNotices() {
     const target = $('announcements');
+    const panel = $('news-settings');
     try {
       const result = await api('/announcements');
       target.replaceChildren();
-      if (result.status !== 'ok') { target.textContent = '服务通知暂时不可用。'; return; }
-      if (!result.items.length) { target.textContent = '暂无服务通知。'; return; }
+      panel.hidden=true;
+      if (result.status !== 'ok' || !Array.isArray(result.items) || !result.items.length) return;
       for (const item of result.items) {
         const article = document.createElement('article'); article.className = 'job';
         const title = document.createElement('strong'); title.textContent = item.title;
@@ -486,7 +489,8 @@
         const body = document.createElement('div'); body.textContent = item.body; body.className = 'result';
         article.append(title, time, body); target.append(article);
       }
-    } catch { target.textContent = '服务通知暂时不可用。'; }
+      panel.hidden=false;
+    } catch { panel.hidden=true;target.replaceChildren(); }
   }
   async function initialize() {
     await loadDuetConfig(true);
@@ -498,7 +502,7 @@
   }
   $('openTutorial').onclick = async () => {
     try {
-      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.3.0');
+      const {requestTutorial} = await import('/duet/assets/client/tutorial-request.mjs?v=0.3.1');
       requestTutorial(localStorage);
       $('tutorialStatus').textContent = '请回到 DSH 页面继续教学。';
     } catch { $('tutorialStatus').textContent = '暂时无法打开教学，请允许浏览器存储后重试。'; }
@@ -507,11 +511,11 @@
   setInterval(() => { loadDuetConfig().catch(showConnectionUnavailable); }, 2000);
   void loadNotices();
   setInterval(loadNotices, 60000);
-  import('/duet/assets/client/shortcuts.mjs?v=0.3.0').then(({mountShortcutSettings}) => {
+  import('/duet/assets/client/shortcuts.mjs?v=0.3.1').then(({mountShortcutSettings}) => {
     const dispose = mountShortcutSettings({speaker:$('speakerShortcut'),mic:$('micShortcut'),clearSpeaker:$('clearSpeakerShortcut'),clearMic:$('clearMicShortcut'),status:$('shortcutStatus')});
     window.addEventListener('pagehide', e => {if(!e.persisted)dispose()}, {once:true});
   }).catch(() => { $('shortcutStatus').textContent = '暂时无法加载快捷键设置，请刷新重试。'; });
-  import('/duet/assets/client/microphone.mjs?v=0.3.0').then(({mountMicrophoneSettings}) => {
+  import('/duet/assets/client/microphone.mjs?v=0.3.1').then(({mountMicrophoneSettings}) => {
     const dispose = mountMicrophoneSettings({select:$('microphoneDevice'),refresh:$('refreshMicrophones'),status:$('microphoneStatus')});
     window.addEventListener('pagehide', dispose, {once:true});
   }).catch(() => { $('microphoneStatus').textContent = '暂时无法加载麦克风设置，请刷新重试。'; });
