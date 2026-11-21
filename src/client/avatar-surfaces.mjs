@@ -19,8 +19,8 @@ export function mountAvatarSurfaces({avatar,canActivate=()=>false}) {
         let action=actionIds.get(node);if(!action){action=`a${++actionSerial}`;actionIds.set(node,action)}
         const gesture=node.hasAttribute('data-duet-user-gesture')&&!canActivate()
         actions.set(action,node)
-        const text=node.matches('summary')?[...node.children].map(n=>n.textContent).join('\n'):node.textContent
-        nodes.push({kind:node.matches('input')?'checkbox':'button',text:node.matches('input')?'':text.slice(0,4000),action,disabled:node.disabled===true,checked:node.checked===true,gesture,label:node.getAttribute('aria-label')||node.closest('label')?.textContent.slice(0,100)||'',...(node.dataset.taskState?{taskState:node.dataset.taskState}:{})})
+        const text=node.matches('summary')?[...node.children].map(n=>n.textContent).join('\n'):(node.querySelector('[data-task-copy]')||node).textContent
+        nodes.push({kind:node.matches('input')?'checkbox':'button',text:node.matches('input')?'':text.slice(0,4000),action,disabled:node.disabled===true,checked:node.checked===true,gesture,label:node.getAttribute('aria-label')||node.closest('label')?.textContent.slice(0,100)||'',...(node.dataset.taskState?{taskState:node.dataset.taskState}:{}),...(node.hasAttribute('data-task-countdown')?{countdown:Number(node.dataset.taskCountdown)}:{})})
         return
       }
       if(/^H[1-6]$/.test(node.tagName)){nodes.push({kind:'heading',text:node.textContent.slice(0,4000)});return}
@@ -46,7 +46,7 @@ export function mountAvatarSurfaces({avatar,canActivate=()=>false}) {
     const key=JSON.stringify({id,nodes,target,layout}),changed=key!==last
     // Cosmetic countdown text does not invalidate an in-flight click. All other
     // content and action state still fence stale confirmations.
-    const actionKey=JSON.stringify({id,target,nodes:nodes.map(n=>n.action&&actions.get(n.action)?.hasAttribute('data-duet-live-text')?{...n,text:''}:n)})
+    const actionKey=JSON.stringify({id,target,nodes:nodes.map(({countdown,...n})=>n.action&&actions.get(n.action)?.hasAttribute('data-duet-live-text')?{...n,text:''}:n)})
     if(changed)current={id,revision:(current?.revision||0)+(actionKey!==semantic?1:0),nodes,target,...(layout?{layout}:{})}
     semantic=actionKey
     // A real click must happen in the playback document. Keep that counterpart visible.

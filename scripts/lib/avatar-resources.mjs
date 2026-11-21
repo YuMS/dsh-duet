@@ -70,7 +70,14 @@ export async function prepareResources(root,{from,fetchImpl=globalThis.fetch}={}
   try{
     for(const [name,bytes]of data)await writeFile(join(temporary,name),bytes,{flag:'wx'})
     await writeFile(join(temporary,'resource-lock.json'),JSON.stringify(lock,null,2)+'\n',{flag:'wx'})
-    try{await rename(temporary,directory)}catch(error){if(!['EEXIST','ENOTEMPTY'].includes(error.code))throw error;await verifyResources(root)}
+    try{await rename(temporary,directory)}catch(error){
+      const windowsCollision=process.platform==='win32'&&error.code==='EPERM'
+      if(!windowsCollision&&!['EEXIST','ENOTEMPTY'].includes(error.code))throw error
+      try{await verifyResources(root)}catch(verificationError){
+        if(windowsCollision&&verificationError.code==='ENOENT')throw error
+        throw verificationError
+      }
+    }
   }finally{await rm(temporary,{recursive:true,force:true})}
   return verifyResources(root)
 }

@@ -1,4 +1,4 @@
-import { microphoneConstraints } from './microphone.mjs?v=0.3.1'
+import { microphoneConstraints } from './microphone.mjs?v=0.3.2'
 import { captionCue, captionAt, AudioCaptionTimeline } from '../shared/avatar.mjs'
 
 export const AUDIO_STOP_PROTOCOL = 'audio_stop_candidates_v1'

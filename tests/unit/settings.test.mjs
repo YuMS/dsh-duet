@@ -86,7 +86,7 @@ test('saved retired endpoints migrate once to HTTPS without retaining credential
     assert.equal(restored.public().insecure_transport, false)
     assert.equal(restored.effective().authorization, PUBLIC_TRIAL_AUTHORIZATION)
     assert.deepEqual(JSON.parse(await readFile(s.path, 'utf8')), { backend_url: DEFAULT_DUET_URL })
-    assert.equal((await stat(s.path)).mode & 0o777, 0o600)
+    if (process.platform !== 'win32') assert.equal((await stat(s.path)).mode & 0o777, 0o600)
     assert.equal(new DuetSettings(s.base, { path: s.path }).public().backend_url, DEFAULT_DUET_URL)
   }
 })
@@ -173,7 +173,7 @@ test('default debug is off, test token is a placeholder, no secret is returned',
 test('settings are private, survive reload, and test does not send an Authorization header', async t => {
   const s = await fixture(t)
   await s.save({ revision: 0, backend_url: 'wss://example.test/ws?protocol=realtime_v2', auth_token: 'test' })
-  assert.equal((await stat(s.path)).mode & 0o777, 0o600)
+  if (process.platform !== 'win32') assert.equal((await stat(s.path)).mode & 0o777, 0o600)
   assert.equal(Object.hasOwn(JSON.parse(await readFile(s.path, 'utf8')), 'auth_token'), false)
   const reloaded = new DuetSettings(s.base, { path: s.path })
   assert.equal(reloaded.effective().authorization, '')

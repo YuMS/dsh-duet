@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,statSync,rmSync} from 'node:fs'
 import {tmpdir} from 'node:os'
-import {join} from 'node:path'
+import {join,sep} from 'node:path'
 import {duetHome,defaultStateFile} from '../../src/host/storage-paths.mjs'
 import {DuetSettings} from '../../src/host/settings.mjs'
 import {RemoteFeedback} from '../../src/host/feedback-files.mjs'
@@ -44,7 +44,7 @@ test('settings migrate privately; writes update only the new file and never over
   const settings=new DuetSettings(config)
   assert.equal(settings.path,join(next,'voice.json'))
   assert.equal(settings.effective().endpoints.online,'wss://first.example/ws')
-  assert.equal(statSync(settings.path).mode&0o777,0o600)
+  if(process.platform!=='win32')assert.equal(statSync(settings.path).mode&0o777,0o600)
   await settings.save({revision:0,backend_url:'wss://new.example/ws'})
   assert.equal(new DuetSettings(config).effective().endpoints.online,'wss://new.example/ws')
   assert.equal(readFileSync(join(old,'voice.json'),'utf8'),original)
@@ -59,7 +59,7 @@ test('migrated identity still accepts the existing feedback cookie',t=>{
   const current=new RemoteFeedback(()=>config)
   assert.equal(current.keyPath,join(next,'feedback-identity.key'))
   assert.equal(current.userId({headers:{cookie}}),id)
-  assert.equal(statSync(current.keyPath).mode&0o777,0o600)
+  if(process.platform!=='win32')assert.equal(statSync(current.keyPath).mode&0o777,0o600)
 })
 
 test('migrated recommendation preserves the daily refresh interval without a network call',async t=>{
@@ -79,7 +79,7 @@ test('new logs use the new directory without moving old recordings',async t=>{
   const trace=new DuetTrace({kind:'test'})
   await trace.close()
   assert.equal(trace.error,null)
-  assert.ok(trace.path.startsWith(join(next,'traces')+'/'))
+  assert.ok(trace.path.startsWith(join(next,'traces')+sep))
   assert.equal(readFileSync(join(old,'traces','old.bin'),'utf8'),'old audio')
 })
 

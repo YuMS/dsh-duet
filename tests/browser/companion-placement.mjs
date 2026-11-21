@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {once} from 'node:events'
 import {readFile} from 'node:fs/promises'
+import {fileURLToPath} from 'node:url'
 import {WebSocketServer} from 'ws'
 import {chromium} from 'playwright'
 const root=process.env.DUET_TEST_FRONTEND?new URL(process.env.DUET_TEST_FRONTEND):new URL('../../desktop/frontend/',import.meta.url),token='a'.repeat(64)
@@ -98,16 +99,20 @@ try{
  assert.equal(await page.evaluate(()=>calls.some(c=>c.name==='hide_avatar')),false,'sleep must not close a healthy companion')
  await page.clock.resume()
  // Native WebView menu uses the same hit-mask carrier without opening voice.
- send({type:'local_state',protocol:'avatar_local_v1',revision:1,items:[{id:'p',session_id:'s',status:'question',pending:true,unread:true}],size:'small',bubble:'medium',enabled:true,available:true})
- await page.locator('[data-duet-notice-badge]').waitFor()
- assert.match(await page.locator('[data-duet-notice-badge]').evaluate(e=>e.style.left),/^[0-9.]+px$/)
+ send({type:'local_state',protocol:'avatar_local_v1',revision:1,items:[{id:'p',session_id:'s',name:'待答任务',status:'question',pending:true,unread:true}],toast:'p',size:'small',bubble:'medium',enabled:true,available:true})
+ const notice=page.locator('[data-duet-local-notice]')
+ await notice.waitFor()
+ assert.match(await notice.innerText(),/待答任务/)
+ assert.equal(await notice.getByRole('menuitem',{name:'去处理',exact:true}).isVisible(),true)
+ assert.equal(await page.locator('[data-duet-notice-badge]').count(),0,'pending notifications must not restore the removed numeric badge')
  await page.locator('#avatar').evaluate(e=>e.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:150,clientY:500})))
  const menu=page.getByRole('menu',{name:'duet 形象菜单'})
  await menu.waitFor()
+ assert.equal(await menu.getByRole('menuitem',{name:'待处理事项与通知',exact:true}).isVisible(),true)
  const labels=await menu.locator('button>span:not([data-value]):not([data-switch]):not([data-size-icon])').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().left))
  assert.ok(labels.length>=8)
  assert.ok(Math.max(...labels)-Math.min(...labels)<1,'native menu labels must share one left edge: '+JSON.stringify(labels))
- await menu.screenshot({path:new URL('../../artifacts/menu-native-aligned.png',import.meta.url).pathname})
+ await menu.screenshot({path:fileURLToPath(new URL('../../artifacts/menu-native-aligned.png',import.meta.url))})
  assert.doesNotMatch(await menu.innerText(),/交互模式|播报模式|关闭语音/)
  const dragCount=await page.evaluate(()=>calls.filter(c=>c.name==='drag_avatar').length)
  await page.locator('#avatar').dispatchEvent('pointerdown',{button:0,buttons:1,clientX:140,clientY:500})

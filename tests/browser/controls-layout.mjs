@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
@@ -129,7 +130,7 @@ try {
     const a=visibleRects[i],b=visibleRects[j]
     assert.ok(a.right<=b.x+1||b.right<=a.x+1||a.bottom<=b.y+1||b.bottom<=a.y+1,'wide sidebar controls overlap')
   }
-  await page.screenshot({path:new URL(`../../../evidence/sidebar-wide-${deviceScaleFactor}.png`,import.meta.url).pathname})
+  await page.screenshot({path:fileURLToPath(new URL(`../../../evidence/sidebar-wide-${deviceScaleFactor}.png`,import.meta.url))})
   await page.evaluate(()=>stop())
   assert.equal(await page.locator('#slot').getAttribute('data-duet-compact-host'),null)
   assert.deepEqual(errors,[])

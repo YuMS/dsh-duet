@@ -1,4 +1,6 @@
 import {avatarSize,AVATAR_SIZES} from './avatar.mjs'
+/** Shared by live agent tasks and short-lived completion notices. */
+export const taskBubbleCardStyle='display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;padding:14px 16px;margin:0;border:1px solid #ffffff90;border-radius:20px;background:#f7f9fbe8;color:#253344;text-align:left;cursor:pointer;box-shadow:0 6px 18px -8px #172c4938;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);font:13px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif'
 const sizes=Object.keys(AVATAR_SIZES),names={large:'大（100%）',medium:'中（75%）',small:'小（50%）'}
 export const nextAvatarSize=value=>sizes[(sizes.indexOf(avatarSize(value))+1)%sizes.length]
 export function sizeButton(button,value,{label=false}={}) {

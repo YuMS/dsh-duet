@@ -61,7 +61,7 @@ test('failed terminal diagnostics survive restart and keep their idempotency IDs
     assert.equal(d.pending.length,1,'four transient failures must not drop the ending')
     const files=readdirSync(root).filter(n=>n.endsWith('.json'))
     assert.equal(files.length,1)
-    assert.equal(statSync(join(root,files[0])).mode & 0o777,0o600)
+    if(process.platform!=='win32')assert.equal(statSync(join(root,files[0])).mode & 0o777,0o600)
     box.dispose()
     const sent=[]
     recovered=new DiagnosticOutbox({root,isOwnerAlive:()=>false,fetcher:async(_url,opts)=>{

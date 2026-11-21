@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readFile, stat, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, stat, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { DuetTrace, redact } from '../../src/host/trace.mjs'
@@ -20,8 +20,10 @@ test('private replay capture preserves audio bytes/timing and redacts credential
   assert.equal(rows[2].blob.offset, 4)
   assert.deepEqual(await readFile(join(trace.path, 'audio.bin')), Buffer.from([1, 2, 3, 4, 5, 6]))
   assert.ok(rows.every((row, i) => i === 0 || row.elapsed_ms >= rows[i - 1].elapsed_ms))
-  assert.equal((await stat(join(trace.path, 'events.jsonl'))).mode & 0o777, 0o600)
-  assert.equal((await stat(trace.path)).mode & 0o777, 0o700)
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(join(trace.path, 'events.jsonl'))).mode & 0o777, 0o600)
+    assert.equal((await stat(trace.path)).mode & 0o777, 0o700)
+  }
 })
 
 test('quotas mark incomplete, retain previous records, and never throw into audio', async t => {
@@ -36,8 +38,12 @@ test('quotas mark incomplete, retain previous records, and never throw into audi
   assert.equal(rows.at(-1).type, 'trace.incomplete')
 })
 
-test('unwritable trace destination fails safely and is observable', async () => {
-  const trace = new DuetTrace({}, { root: '/dev/null/not-a-directory' })
+test('unwritable trace destination fails safely and is observable', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'voice-trace-blocked-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const blocker = join(dir, 'file')
+  await writeFile(blocker, 'ordinary file')
+  const trace = new DuetTrace({}, { root: join(blocker, 'not-a-directory') })
   trace.event('ignored', {}); await trace.close()
   assert.equal(trace.snapshot().complete, false)
 })

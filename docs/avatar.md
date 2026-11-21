@@ -11,6 +11,7 @@
 - 教学、连接提示和确认框可在形象旁展示；隐藏角色和语音评分跟随发起操作的位置。
 - 角色支持大、中、小三种尺寸。桌面窗口可以拖动，右键菜单提供打开 DSH、待处理事项、气泡样式、任务通知和教学入口。
 - 任务通知可以独立于语音模式使用，提示任务完成和待处理事项。
+- 桌面形象所在屏幕有前台全屏应用时，形象和附近气泡会自动隐藏，退出全屏后恢复；语音和任务继续运行。
 - 设置中可修改助手昵称，也支持语音改名。昵称最多 5 个汉字或 2 个英文单词，中英混用时最多 5 个字符。
 
 首次启用声音或开始教学时，按提示回到 DSH 页面点击对应按钮。
@@ -40,6 +41,11 @@ npm run build:avatar:desktop
 cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
 node scripts/test-avatar-native.mjs
 ```
+
+全屏隐藏的状态与显示区域判断包含在上述 Cargo 测试中。
+
+修改原生窗口行为后，需要重新编译 Mac/Windows 辅助窗口。桌面验收包含全屏进入/退出、
+多显示器、普通最大化、窗口切换、全屏中启动形象，以及恢复后不抢焦点、不改变位置。
 
 构建产物位于 `desktop/bin/<platform>-<arch>/`。本版桌面形象支持 macOS Apple Silicon 和 Windows x64；其他平台可使用网页形象。
 GitHub Actions 的 `Build avatar plugin package` 工作流分别构建这两个平台，并汇总为插件安装包。

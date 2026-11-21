@@ -66,9 +66,14 @@ test('corrupt cache is not silently replaced or accepted',()=>fixture(async({roo
   await writeFile(join(directory,'portrait.png'),'corrupt')
   await assert.rejects(prepareResources(root,{fetchImpl:()=>assert.fail('corrupt cache must stop before network')}),/checksum or size/)
 }))
-test('symlink exports are rejected',async t=>fixture(async({root,from,data})=>{
-  await writeFile(join(root,'outside.png'),data['portrait.png']);await rm(join(from,'portrait.png'))
-  try{await symlink(join(root,'outside.png'),join(from,'portrait.png'))}catch(e){if(e.code==='EPERM'){t.skip('symlink permission unavailable');return}throw e}
+test('linked exports are rejected',()=>fixture(async({root,from,data})=>{
+  const outside=join(root,'outside'),portrait=join(from,'portrait.png')
+  await rm(portrait)
+  if(process.platform==='win32'){
+    await mkdir(outside);await symlink(outside,portrait,'junction')
+  }else{
+    await writeFile(outside,data['portrait.png']);await symlink(outside,portrait)
+  }
   await assert.rejects(prepareResources(root,{from}),/regular resource/)
 }))
 test('concurrent imports converge on one complete pinned version',()=>fixture(async({root,from})=>{

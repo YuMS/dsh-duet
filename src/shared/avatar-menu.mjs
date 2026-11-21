@@ -1,6 +1,7 @@
 /** Local-only presentation protocol. No remote URLs, credentials or executable payloads. */
 export const AVATAR_LOCAL_PROTOCOL='avatar_local_v1'
 export const NOTICE_KEY='dsh.duet.avatar.notices.v1'
+export const COMPLETION_NOTICE_MS=3000
 export const MENU_ACTIONS=['open_dsh','pending','settings','tutorial','hide','notifications','size','bubble','view','dismiss']
 const sizes=['small','medium','large'], statuses=['completed','failed','stopped','approval','question','plan_review']
 export function noticePreferences(storage=globalThis.localStorage){
@@ -62,7 +63,8 @@ export class AvatarNotices {
       const status=job.turn_end_reason==='aborted'?'stopped':job.status==='failed'?'failed':job.status==='succeeded'&&job.turn_end_reason==='completed'?'completed':null
       if(!status)continue
       const row=allowed.get(job.session_id)
-      this.items.set(id,{id,order:++this.order,session_id:job.session_id,name:row.label,status,summary:status==='failed'?text(job.error,240):'',pending:false,unread:true})
+      this.items.set(id,{id,order:++this.order,session_id:job.session_id,name:row.label,status,summary:status==='failed'?text(job.error,240):'',pending:false,unread:status!=='completed',
+        ...(status==='completed'?{expiresAt:Date.now()+COMPLETION_NOTICE_MS}:{})})
       this.toast=id;this.toastAt=Date.now()
     }
     while(this.seen.size>1024)this.seen.delete(this.seen.values().next().value)
@@ -78,6 +80,7 @@ export class AvatarNotices {
   }
   dismiss(id){if(this.items.has(id))this.dismissed.add(id);if(this.toast===id)this.toast=null;this.revision++}
   state(prefs,size,available=true){
+    for(const [id,item]of this.items)if(item.expiresAt && Date.now()>=item.expiresAt){this.items.delete(id);if(this.toast===id)this.toast=null}
     const pending=[...this.items.values()].find(i=>i.pending&&i.unread&&!this.dismissed.has(i.id))
     const toast=pending?.id??(Date.now()-this.toastAt<=8000?this.toast:null)
     return avatarLocalState({type:'local_state',protocol:AVATAR_LOCAL_PROTOCOL,revision:this.revision,items:[...this.items.values()],

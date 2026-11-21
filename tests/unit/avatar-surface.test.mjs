@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {mkdtemp,cp,writeFile,rm,symlink} from 'node:fs/promises'
+import {mkdtemp,cp,writeFile,rm,symlink,realpath,mkdir} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {avatarSurface,avatarSurfaceAction} from '../../src/shared/avatar-surface.mjs'
@@ -23,12 +23,17 @@ test('external desktop assets reject damage, incompatible protocol and path esca
  const dir=await mkdtemp(join(tmpdir(),'duet-assets-'))
  try{
   await cp(desktopAssetsPath,join(dir,'ui'),{recursive:true})
-  assert.equal(verifyDesktopAssets(join(dir,'ui')),join(dir,'ui'))
+  assert.equal(verifyDesktopAssets(join(dir,'ui')),await realpath(join(dir,'ui')))
   await writeFile(join(dir,'ui/companion.mjs'),'damaged')
   assert.throws(()=>verifyDesktopAssets(join(dir,'ui')),/damaged/)
   await cp(desktopAssetsPath,join(dir,'ui'),{recursive:true})
-  await rm(join(dir,'ui/index.html'));await writeFile(join(dir,'outside'),'unsafe')
-  await symlink(join(dir,'outside'),join(dir,'ui/index.html'))
+  const outside=join(dir,'outside'),index=join(dir,'ui','index.html')
+  await rm(index)
+  if(process.platform==='win32'){
+   await mkdir(outside);await symlink(outside,index,'junction')
+  }else{
+   await writeFile(outside,'unsafe');await symlink(outside,index)
+  }
   assert.throws(()=>verifyDesktopAssets(join(dir,'ui')),/invalid/)
   await writeFile(join(dir,'ui/manifest.json'),'{"protocol":1,"files":{}}')
   assert.throws(()=>verifyDesktopAssets(join(dir,'ui')),/incompatible/)

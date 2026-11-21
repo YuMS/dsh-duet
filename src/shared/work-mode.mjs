@@ -9,6 +9,20 @@ export function effectiveWorkPolicy(config,policy='recommend_agent'){
 const READ_KEY='duet.agent.visited.v1', visitKey=id=>READ_KEY+'.'+id
 export const nativeWorkerId=id=>typeof id==='string' && /^worker-[a-f0-9]{32}$/.test(id)
 const cachedVisits=new Map()
+const completionTimers=new Map(),completionKey=id=>'duet.agent.completion-expiry.v1.'+id
+/** Start once on receipt, not on the possibly skewed DSH completion clock. */
+export function taskCompletionSeconds(row,now=Date.now()){
+  if(!nativeWorkerId(row?.session_id)||!Number.isFinite(row.finished_at)||taskCardState(row)!=='completed')return null
+  const stamp=JSON.stringify([row.run_id??null,row.finished_at]),key=completionKey(row.session_id)
+  let saved=completionTimers.get(key)
+  try{const stored=JSON.parse(localStorage.getItem(key));if(stored?.stamp===stamp&&Number.isFinite(stored.end))saved=stored}catch{}
+  if(saved?.stamp!==stamp||!Number.isFinite(saved.end)){
+    saved={stamp,end:now+10000};completionTimers.set(key,saved)
+    try{localStorage.setItem(key,JSON.stringify(saved))}catch{}
+  }
+  completionTimers.set(key,saved)
+  return Math.max(0,Math.min(10,Math.ceil((saved.end-now)/1000)))
+}
 const waitingReads=new Map(),waitingKey=id=>'duet.agent.waiting-read.v1.'+id
 export function taskCardState(row){
   return ['completed','merged','ready','ended'].includes(row.state)?'completed':['failed'].includes(row.state)?'failed':
@@ -45,6 +59,7 @@ export function visibleTaskRows(rows){
   const old=legacyVisits()
   return rows.filter(r=>{
     if(!r)return false
+    if(taskCompletionSeconds(r)===0)return false
     const visited=Math.max(Number(old[r.session_id])||0,cachedVisits.get(r.session_id)||0,storedVisit(r.session_id))
     return r.finished_at ? visited<r.finished_at : taskCardState(r)!=='waiting'||!waitingWasRead(r)
   })
@@ -96,4 +111,9 @@ export function workModeIssue(config) {
     if(!config.agent_options?.workspace_id)return 'workspace_selection_required'
   }
   return null
+}
+export function taskModelLabel(info) {
+  if(!info || typeof info.provider!=='string' || typeof info.model!=='string')return '模型尚未记录'
+  const prefix={response:'最近使用',request:'最近请求',selection:'已选择',configured:'待使用'}[info.source]||'模型'
+  return `${prefix}：${info.provider} / ${info.model}`
 }

@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
 #import <stdlib.h>
 #import <unistd.h>
@@ -28,6 +29,47 @@ int duet_focus_owner(void) {
     if (![NSThread isMainThread] || !duetIsOwner(duetOwnerApplication)) return 0;
     [duetOwnerApplication unhide];
     return [duetOwnerApplication activateWithOptions:NSApplicationActivateIgnoringOtherApps] ? 1 : 0;
+}
+
+// Window metadata only: no screen capture, window titles or permission prompts.
+// top is the character center measured down from the borderless carrier's top.
+int duet_fullscreen_at_character(void *pointer, double top) {
+    if (![NSThread isMainThread] || !pointer) return -1;
+    NSWindow *window = (__bridge NSWindow *)pointer;
+    NSPoint point = NSMakePoint(NSMidX(window.frame), NSMaxY(window.frame) - top);
+    NSScreen *target = nil;
+    for (NSScreen *screen in NSScreen.screens) {
+        if (NSPointInRect(point, screen.frame)) { target = screen; break; }
+    }
+    if (!target) return -1;
+    NSNumber *display = target.deviceDescription[@"NSScreenNumber"];
+    if (!display) return -1;
+    CGRect screen = CGDisplayBounds(display.unsignedIntValue);
+    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
+    if (!front) return -1;
+    if (front.processIdentifier == getpid()
+        || [front.bundleIdentifier isEqualToString:@"com.apple.finder"]
+        || [front.bundleIdentifier isEqualToString:@"com.apple.dock"]) return 0;
+    NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    if (!windows) return -1;
+    for (NSDictionary *info in windows) {
+        if ([info[(__bridge NSString *)kCGWindowOwnerPID] intValue] != front.processIdentifier
+            || [info[(__bridge NSString *)kCGWindowLayer] intValue] != 0
+            || [info[(__bridge NSString *)kCGWindowAlpha] doubleValue] <= 0) continue;
+        CGRect rect;
+        if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)info[(__bridge NSString *)kCGWindowBounds], &rect)) continue;
+        if (CGRectGetMinX(rect) <= CGRectGetMinX(screen) + 1
+            && CGRectGetMinY(rect) <= CGRectGetMinY(screen) + 1
+            && CGRectGetMaxX(rect) >= CGRectGetMaxX(screen) - 1
+            && CGRectGetMaxY(rect) >= CGRectGetMaxY(screen) - 1) return 1;
+    }
+    return 0;
+}
+
+void duet_show_without_activation(void *pointer) {
+    if (![NSThread isMainThread] || !pointer) return;
+    [(__bridge NSWindow *)pointer orderFrontRegardless];
 }
 
 static char duetFreePlacementKey;

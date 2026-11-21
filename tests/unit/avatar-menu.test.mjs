@@ -4,6 +4,17 @@ import {AvatarNotices,avatarLocalState,avatarMenuAction,avatarMenuResult,noticeP
 const sessions=[{session_id:'s1',label:'灵感笔记',workspace_id:'w1',running:true}]
 const prefs={enabled:true,snoozeUntil:0,bubble:'medium'}
 const done=(id='j1',reason='completed')=>({id,session_id:'s1',status:'succeeded',completion_seq:1,turn_end_reason:reason,result:'text cannot set status'})
+test('completion notices expire after three seconds without unread accumulation or replay',t=>{
+ let now=10000;t.mock.method(Date,'now',()=>now)
+ const m=new AvatarNotices(),update=()=>m.update({scope:'w1',epoch:'e1',sessions,results:[done()]})
+ m.update({scope:'w1',epoch:'e1',sessions,results:[]})
+ assert.equal(m.state(prefs,'large').toast,null,'running alone never shows a completion card')
+ update();const id=m.state(prefs,'large').toast
+ assert.ok(id);assert.equal(m.items.get(id).unread,false)
+ now+=2999;update();assert.equal(m.state(prefs,'large').toast,id)
+ now++;assert.equal(m.state(prefs,'large').toast,null);assert.equal(m.items.size,0)
+ update();assert.equal(m.state(prefs,'large').toast,null,'same completion snapshot must not reappear')
+})
 test('local notices use explicit turn outcome, not assistant text, and deduplicate',()=>{
  const m=new AvatarNotices(),update=results=>m.update({scope:'w1',epoch:'e1',sessions,results})
  update([done(),done('unknown','unknown'),{...done('bad'),session_id:'other'}, {...done('child'),session_id:'child'}])

@@ -1,5 +1,6 @@
 import {focusedSession,openLocalSession} from './composer.mjs'
-import {TASK_STATES as states, noteTaskNoticeVisit, taskCardState, visibleTaskRows} from '../shared/work-mode.mjs'
+import {taskBubbleCardStyle} from '../shared/avatar-ui.mjs'
+import {TASK_STATES as states, noteTaskNoticeVisit, taskCardState, visibleTaskRows, taskModelLabel, taskCompletionSeconds} from '../shared/work-mode.mjs'
 const active=new Set(['queued','pending','running','progress','waiting','waiting_user','blocked'])
 const bubbleCSS=`
 [data-duet-agent-tasks]{position:fixed;isolation:isolate;z-index:2147483599;margin:0;color:CanvasText;font:13px/1.35 -apple-system,BlinkMacSystemFont,system-ui,sans-serif}
@@ -17,7 +18,7 @@ const bubbleCSS=`
 [data-duet-agent-tasks][data-inline] summary{display:none}
 [data-duet-agent-tasks][data-inline] [data-task-list]{position:static;width:100%;max-height:65vh;overflow:auto}
 [data-duet-agent-tasks] [data-task-list]{background:transparent!important;border:0;box-shadow:none;padding:0;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
-[data-duet-agent-tasks] [data-task-list] button{display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;padding:14px 16px;margin:0 0 8px;border:1px solid #ffffff90;border-radius:20px;background:#f7f9fbe8;color:#253344;text-align:left;cursor:pointer;box-shadow:0 6px 18px -8px #172c4938;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+[data-duet-agent-tasks] [data-task-list] button{${taskBubbleCardStyle};margin-bottom:8px}
 [data-duet-agent-tasks] [data-task-list] button span{font-size:13px;font-weight:550;line-height:1.5;overflow-wrap:anywhere}
 [data-task-state]::before{content:'';display:block;flex:0 0 18px;width:18px;height:18px;box-sizing:border-box;border:2px solid #62a0cd45;border-top-color:#468abf;border-radius:50%;animation:duet-task-spin 1s linear infinite}
 [data-task-state=completed]::before{content:'✓';border:0;background:#dcefe8;color:#23845e;text-align:center;font:600 14px/18px system-ui;animation:none}
@@ -33,8 +34,10 @@ const bubbleCSS=`
 
 /** A local, connection-owned projection; never turn the model's short handles into UI routes. */
 export function agentTaskPanel(ctx,anchor,notice,presentation=()=>null){
-  let box,summary,title,statusLine,count,list,attempt,currentFrame,limit=50,lifecycle,resize,mutations,raf=0,tracked
+  let box,summary,title,statusLine,count,list,attempt,currentFrame,limit=50,lifecycle,resize,mutations,raf=0,tracked,timer
+  let countdowns=[]
   function reset(){
+    clearInterval(timer);timer=null;countdowns=[]
     attempt?.abort();lifecycle?.abort();resize?.disconnect();mutations?.disconnect();cancelAnimationFrame(raf)
     box?.remove();box=null;currentFrame=null;tracked=null;raf=0;limit=50
   }
@@ -73,6 +76,15 @@ export function agentTaskPanel(ctx,anchor,notice,presentation=()=>null){
       maxHeight:Math.max(32,Math.min(innerHeight*.46,up?above:below))+'px'})
   }
   function schedule(){if(!raf)raf=requestAnimationFrame(()=>{raf=0;place()})}
+  function tick(){
+    for(const {row,button,label} of countdowns){
+      const seconds=taskCompletionSeconds(row)
+      if(seconds===0){update({...currentFrame,focus:null},false);return}
+      if(button.dataset.taskCountdown!==String(seconds)){
+        button.dataset.taskCountdown=String(seconds);label.textContent=`${seconds}s 后消失`
+      }
+    }
+  }
   function observe(){
     if(!currentFrame || document.hidden || !document.hasFocus())return
     const id=focusedSession(ctx)
@@ -148,20 +160,37 @@ export function agentTaskPanel(ctx,anchor,notice,presentation=()=>null){
     if(inline)box.open=true;else if(wasInline)box.open=false
     if(box.hidden)box.open=false
     list.replaceChildren()
+    countdowns=[]
     if(!rows.length)list.textContent='还没有任务'
     for(const r of rows.slice(0,limit)){
       const button=document.createElement('button');button.type='button'
-      const label=document.createElement('span');label.textContent=r.name||'未命名任务'
+      const label=document.createElement('span');label.dataset.taskCopy='';label.textContent=r.name||'未命名任务'
+      const model=document.createElement('small');model.textContent=taskModelLabel(r.model_info)
+      model.style.cssText='display:block;font-size:10px;font-weight:400;opacity:.7;overflow-wrap:anywhere'
       button.dataset.taskState=taskCardState(r)
       button.title=label.textContent+' · '+(states[r.state]||'状态待确认')
       button.setAttribute('aria-label',button.title)
-      button.append(label);button.onclick=()=>void open(r.session_id,false);list.append(button)
+      label.append(document.createTextNode('\n'),model)
+      button.append(label)
+      const seconds=taskCompletionSeconds(r)
+      if(seconds!==null){
+        const countdown=document.createElement('small');countdown.dataset.taskCountdownLabel=''
+        countdown.style.cssText='margin-left:auto;flex-shrink:0;color:#737b85;font:400 10px/1.4 system-ui;white-space:nowrap'
+        countdown.textContent=`${seconds}s 后消失`;button.dataset.taskCountdown=String(seconds)
+        button.append(countdown);countdowns.push({row:r,button,label:countdown})
+      }
+      button.onclick=()=>void open(r.session_id,false);list.append(button)
     }
     if(rows.length>limit){
       const more=document.createElement('button');more.type='button';more.textContent='查看更多任务（剩余 '+(rows.length-limit)+'）'
       more.onclick=()=>{limit+=50;update({...currentFrame,focus:null},false)};list.append(more)
     }
     if(follow&&rows.some(r=>r.session_id===frame.focus))void open(frame.focus,true)
+    // Expire every completed row, including those behind the collapsed summary.
+    clearInterval(timer);timer=rows.some(r=>taskCompletionSeconds(r)!==null)?setInterval(()=>{
+      if(rows.some(r=>taskCompletionSeconds(r)===0))update({...currentFrame,focus:null},false)
+      else tick()
+    },1000):null
     place()
   }
   return {update,reset,observe}

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { sep } from 'node:path'
 import vm from 'node:vm'
 import { PLUGIN_VERSION } from '../src/shared/state.mjs'
 import { publicAsset } from '../src/host/assets.mjs'
@@ -24,7 +25,7 @@ vm.runInNewContext(read(pkg.exports['./client'].default), {
 assert.equal(client.id, pkg.name)
 assert.equal(typeof client.factory, 'function')
 assert.ok(!readdirSync(root).some(f => /^(?:deepseek_harness|test_|smoke_)/.test(f) && /\.(?:mjs|js|html|yml)$/.test(f)), 'runtime and tests belong in their own directories')
-for (const name of readdirSync(new URL('src/', root), {recursive:true}).filter(f => /\.(mjs|js|html)$/.test(f)).map(f => `src/${f}`)) {
+for (const name of readdirSync(new URL('src/', root), {recursive:true}).filter(f => /\.(mjs|js|html)$/.test(f)).map(f => `src/${f.split(sep).join('/')}`)) {
   const source = read(name)
   assert.ok(!/@[a-z0-9_.-]+\/dsh-duplex-control/.test(source), `unexpected package identity: ${name}`)
   assert.ok(!source.includes('/cpfs/'), `deployment path: ${name}`)

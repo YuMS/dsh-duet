@@ -1,5 +1,5 @@
-import { WORK_MODES, AGENT_PERMISSION_TEXT, AGENT_WORKSPACE_NOTICE, workModeIssue, TASK_STATES, visibleTaskRows } from '../shared/work-mode.mjs'
-import { identityFetch } from './identity.mjs?v=0.3.1'
+import { WORK_MODES, AGENT_PERMISSION_TEXT, AGENT_WORKSPACE_NOTICE, workModeIssue, TASK_STATES, taskModelLabel } from '../shared/work-mode.mjs'
+import { identityFetch } from './identity.mjs?v=0.3.2'
 
 const styles = `
 .dt-work{--ink:light-dark(#20392d,#e3eee7);--muted:light-dark(#53695c,#a7b9ae);--edge:light-dark(#cbd7cf,#3b4a40);--surface:light-dark(#fff,#191f1d);--tint:light-dark(#eef7f0,#203329);--accent:light-dark(#236548,#b3e9cb);color:var(--ink);font:normal 14px/1.5 system-ui,sans-serif;text-align:start;display:grid;gap:16px;container-type:inline-size}
@@ -147,16 +147,22 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
   const tasks=document.createElement('details')
   if(!cancel&&!preview){
     const title=document.createElement('summary'),list=document.createElement('ul'),refresh=document.createElement('button')
-    title.textContent='任务状态';refresh.type='button';refresh.textContent='刷新'
+    title.textContent='会话与模型';refresh.type='button';refresh.textContent='刷新'
     const load=async()=>{
       refresh.disabled=true
       try{
-        const rows=visibleTaskRows((await api('agent-tasks')).rows)
+        const {rows=[],main}=await api('agent-tasks')
         list.replaceChildren()
-        for(const row of rows){
-          const li=document.createElement('li');li.textContent=(row.name||'未命名任务')+' · '+(TASK_STATES[row.state]||'状态待确认');list.append(li)
+        const append=(name,info)=>{
+          const li=document.createElement('li'),label=document.createElement('strong'),model=document.createElement('small')
+          label.textContent=name;model.textContent=taskModelLabel(info);model.style.cssText='display:block;overflow-wrap:anywhere;color:var(--muted)'
+          li.style.cssText='margin:10px 0;list-style:none';li.append(label,model);list.append(li)
         }
-        if(!rows.length)list.textContent='还没有任务'
+        if(main)append('dsh-duet 主会话',main.model_info)
+        for(const row of rows){
+          append((row.name||'未命名任务')+' · '+(TASK_STATES[row.state]||'状态待确认'),row.model_info)
+        }
+        if(!rows.length&&!main)list.textContent='还没有任务'
       }catch{list.textContent='暂时无法读取任务状态'}
       finally{refresh.disabled=false}
     }

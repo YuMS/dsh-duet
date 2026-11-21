@@ -11,6 +11,7 @@ export function avatarSurface(value) {
     length+=n.text.length;if(length>10000)throw Error('invalid_surface')
     const node={kind:n.kind,text:n.text}
     if(['running','completed','waiting','failed','stopped'].includes(n.taskState))node.taskState=n.taskState
+    if(n.kind==='button'&&n.taskState==='completed'&&Number.isInteger(n.countdown)&&n.countdown>=0&&n.countdown<=10)node.countdown=n.countdown
     if(n.kind==='button'||n.kind==='checkbox') {
       if(!/^a\d+$/.test(n.action))throw Error('invalid_surface')
       Object.assign(node,{action:n.action,disabled:n.disabled===true,checked:n.checked===true,gesture:n.gesture===true,label:String(n.label||'').slice(0,100)})

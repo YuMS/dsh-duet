@@ -7,6 +7,7 @@ mod layout;
 mod position;
 mod assets;
 mod owner_window;
+mod fullscreen;
 use hit_mask::HitMask;
 #[cfg(target_os = "macos")]
 extern "C" {
@@ -41,8 +42,8 @@ fn hide_avatar(app: tauri::AppHandle, window: tauri::WebviewWindow) {
     app.exit(0);
 }
 #[tauri::command]
-fn show_avatar(window: tauri::WebviewWindow) -> Result<(), String> {
-    window.show().map_err(|e| e.to_string())
+fn show_avatar(window: tauri::WebviewWindow, state: tauri::State<'_, fullscreen::State>) -> Result<(), String> {
+    fullscreen::refresh(&window, &state, true)
 }
 #[tauri::command]
 fn avatar_geometry(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
@@ -119,6 +120,7 @@ fn main() {
     let files=assets::load(std::path::Path::new(&asset_path)).expect("Invalid local UI assets");
     let init = format!("window.__DUET_AVATAR__={};", serde_json::json!({"url":url,"token":token,"size":size}));
     let hit: HitState = Arc::new(Mutex::new(HitMask::default()));
+    let visibility: fullscreen::State = Arc::new(Mutex::new(fullscreen::Visibility::default()));
     tauri::Builder::default()
         .register_uri_scheme_protocol("duet-avatar",move |_context,request| {
             let path=request.uri().path();
@@ -131,6 +133,7 @@ fn main() {
                 .body(data.cloned().unwrap_or_default()).unwrap()
         })
         .manage(hit.clone())
+        .manage(visibility.clone())
         .invoke_handler(tauri::generate_handler![hide_avatar, show_avatar, drag_avatar, avatar_hit_mask, set_avatar_size, focus_dsh, remember_dsh, avatar_geometry])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -152,6 +155,8 @@ fn main() {
             // window whose work-area clamp destroys a saved upper-screen position.
             resize_avatar(&win,&size,true,true).map_err(std::io::Error::other)?;
             std::thread::spawn(move || {
+                let probe_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let mut fullscreen_check = std::time::Instant::now()-Duration::from_secs(1);
                 let mut ignored = false;
                 let mut geometry=None;
                 let mut display_check=std::time::Instant::now()-Duration::from_secs(1);
@@ -159,6 +164,17 @@ fn main() {
                 let mut pending=false;
                 loop {
                     std::thread::sleep(Duration::from_millis(50));
+                    // The OS probe and visibility transition run on the UI thread.
+                    // Keep at most one queued probe if that thread is busy.
+                    if fullscreen_check.elapsed() >= Duration::from_millis(500)
+                        && !probe_pending.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                        fullscreen_check = std::time::Instant::now();
+                        let w = win.clone(); let state = visibility.clone(); let pending = probe_pending.clone();
+                        if win.app_handle().run_on_main_thread(move || {
+                            let _ = fullscreen::refresh(&w, &state, false);
+                            pending.store(false, std::sync::atomic::Ordering::Release);
+                        }).is_err() { break; }
+                    }
                     let Ok(position) = win.inner_position() else { break };
                     let scale = win.scale_factor().unwrap_or(1.0);
                     let size=win.inner_size().ok();

@@ -676,8 +676,10 @@ export function apply(ctx, options = {}) {
       const policy=effectiveWorkPolicy(settings.public(),await workPolicy.get())
       if(policy.work_mode!=='agent'||policy.agent_permission_version!==1){sendJson(res,200,{rows:[]});return}
       try{
-        const rows=await ctx.get('duetAgent').taskRows(policy.agent_options.workspace_id)
-        sendJson(res,200,{rows:rows.map(({name,state,session_id,finished_at})=>({name,state,
+        const service=ctx.get('duetAgent'),workspace=policy.agent_options.workspace_id
+        const rows=await service.taskRows(workspace)
+        const main=await service.mainRow?.(workspace)??null
+        sendJson(res,200,{main,rows:rows.map(({name,state,session_id,finished_at,model_info})=>({name,state,model_info,
           ...(/^worker-[a-f0-9]{32}$/.test(session_id)?{session_id,finished_at}:{} )}))})
       }catch{sendError(res,503,'任务状态暂不可用')}
       return

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {once} from 'node:events'
 import {readFile,mkdir} from 'node:fs/promises'
+import {fileURLToPath} from 'node:url'
 import {WebSocketServer} from 'ws'
 import {chromium} from 'playwright'
 const root=new URL('../../desktop/frontend/',import.meta.url),token='a'.repeat(64),messages=[]
@@ -140,10 +141,10 @@ try{
   await page.waitForFunction(()=>document.querySelector('#tools').dataset.interactive==='false')
   assert.equal(await page.locator('#tools').evaluate(el=>getComputedStyle(el).opacity),'0')
   await page.waitForFunction(()=>calls.filter(c=>c.name==='avatar_hit_mask').at(-1)?.args.regions.length===1)
-  await page.screenshot({path:new URL(`../../artifacts/avatar/desktop-r4-${size}.png`,import.meta.url).pathname})
+  await page.screenshot({path:fileURLToPath(new URL(`../../artifacts/avatar/desktop-r4-${size}.png`,import.meta.url))})
   if(size==='small'){
     await showToolbar()
-    await page.screenshot({path:new URL('../../artifacts/avatar/desktop-r4-small-hover.png',import.meta.url).pathname})
+    await page.screenshot({path:fileURLToPath(new URL('../../artifacts/avatar/desktop-r4-small-hover.png',import.meta.url))})
   }
  }
  // Queued resize replies must not revert the last preference.
@@ -157,7 +158,7 @@ try{
  send({type:'input_effect',text:'<b>输入一段内容</b>'});await page.waitForFunction(()=>document.querySelector('#bubble').dataset.input==='true')
  assert.equal(await page.locator('#keyboard').isVisible(),true);assert.equal(await page.locator('#text b').count(),0)
  await mkdir(new URL('../../artifacts/avatar/',import.meta.url),{recursive:true})
- await page.screenshot({path:new URL('../../artifacts/avatar/desktop.png',import.meta.url).pathname})
+ await page.screenshot({path:fileURLToPath(new URL('../../artifacts/avatar/desktop.png',import.meta.url))})
  send({type:'clear_input_effect'});await page.waitForFunction(()=>document.querySelector('#bubble').dataset.input==='false')
  const dragPoint=await showToolbar()
  await page.mouse.down();await page.mouse.move(dragPoint.x+6,dragPoint.y+5);await page.mouse.up()
@@ -172,7 +173,7 @@ try{
  assert.ok(messages.some(m=>m.type==='surface_action'&&m.id==='s1'&&m.revision===1&&m.action==='a1'))
  await page.waitForFunction(()=>calls.filter(c=>c.name==='avatar_hit_mask').at(-1)?.args.regions.some(r=>r[2]===356))
  assert.equal(await page.locator('[data-mode=online]').getAttribute('data-teaching'),'')
- await page.screenshot({path:new URL('../../artifacts/avatar/desktop-tutorial-surface.png',import.meta.url).pathname})
+ await page.screenshot({path:fileURLToPath(new URL('../../artifacts/avatar/desktop-tutorial-surface.png',import.meta.url))})
  send({type:'surface',panel:null});await page.waitForFunction(()=>document.querySelector('#surface').hidden)
  await page.waitForFunction(()=>document.querySelector('#bubble').hidden,null,{timeout:4000})
  await showToolbar();await page.locator('#close').click();await page.locator('[data-avatar-close-choice=cancel]').click()

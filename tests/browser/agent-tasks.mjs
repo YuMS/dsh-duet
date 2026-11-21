@@ -12,6 +12,7 @@ try{
     return route.fulfill({contentType:'text/html',body:'<aside data-slot="sidebar" style="position:fixed;bottom:8px;width:220px"><div id="pet" style="height:170px"><div data-duet-avatar-stage style="height:100%"></div></div><div id="controls" style="height:36px"></div></aside>'})
   })
   await p.goto('http://localhost:19184/')
+  await p.clock.install()
   const html=await readFile(new URL('../../src/avatar/companion.html',import.meta.url),'utf8')
   const css=html.match(/<style>([\s\S]*?)<\/style>/)[1]
   await p.addStyleTag({content:css.split('\n').filter(line=>line.includes('#surface[')||line.includes('@keyframes duet-task-spin')).join('\n').replaceAll('#surface','#native-mirror')})
@@ -29,7 +30,7 @@ try{
     window.projections=[]
     const view=mountCompanionSurface(mirror,{send:m=>surfaces.action(m),changed(){}})
     window.surfaces=mountAvatarSurfaces({avatar:()=>({presentation,surface:m=>{projections.push(m);view.update(m);return true}})})
-    window.frame={rows:[{session_id:id,name:'修改已有图画',state:'running'}],focus:id}
+    window.frame={rows:[{session_id:id,name:'修改已有图画',state:'running',model_info:{provider:'local',model:'test-model',source:'response'}}],focus:id}
     panel.update({...frame,focus:null},true)
   })
   assert.ok(await p.evaluate(()=>{
@@ -38,7 +39,7 @@ try{
   }))
   const summary=p.locator('[data-duet-agent-tasks] summary')
   assert.equal(await summary.isVisible(),false)
-  assert.equal(await p.locator('[data-duet-agent-tasks] button').innerText(),'修改已有图画')
+  assert.match(await p.locator('[data-duet-agent-tasks] button').innerText(),/修改已有图画\s+最近使用：local \/ test-model/)
   assert.equal(await p.locator('[data-task-state=running]').count(),1)
   await p.evaluate(()=>{
     const q={session_id:'worker-'+'a'.repeat(32),name:'确认页面配色',state:'waiting_user'}
@@ -119,7 +120,10 @@ try{
   assert.equal(await mirror.locator('[data-task-state=running]').count(),1)
   assert.equal(await mirror.locator('[data-task-state=completed]').count(),1)
   assert.equal(await mirror.locator('[data-task-state=waiting]').count(),1)
-  assert.deepEqual(await mirror.locator('button').allTextContents(),['任务 b','任务 c','任务 d'])
+  assert.match(await mirror.locator('[data-task-state=completed]').innerText(),/任务 c.*模型尚未记录/s)
+  assert.match(await mirror.locator('[data-task-countdown-label]').innerText(),/^\d+s 后消失$/)
+  assert.equal(await mirror.locator('[data-task-countdown-label]').evaluate(e=>getComputedStyle(e).fontSize),'10px')
+  assert.equal(await mirror.locator('[data-task-countdown-label]').evaluate(e=>getComputedStyle(e).color),'rgb(115, 123, 133)')
   assert.equal(await mirror.locator('[data-task-state=running]').evaluate(e=>getComputedStyle(e,'::before').animationName),'duet-task-spin')
   assert.equal(await mirror.evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)')
   if(process.env.DUET_NATIVE_TASK_PREVIEW){
@@ -150,6 +154,24 @@ try{
   await p.evaluate(()=>{window.surface='web';window.dispatchEvent(new Event('duet:avatar-presentation'));surfaces.sync()})
   await p.waitForFunction(()=>getComputedStyle(document.querySelector('[data-duet-agent-tasks]')).visibility==='visible')
   assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),true)
+  // Countdown updates do not rebuild clickable cards or invalidate native actions.
+  await p.evaluate(()=>{
+    frame.rows[1]={session_id:'worker-'+'9'.repeat(32),run_id:'countdown',state:'completed',name:'倒计时任务',finished_at:Date.now()}
+    panel.update(frame,false);window.native=true;window.surface='desktop';surfaces.sync()
+    window.countdownButton=document.querySelector('[data-task-state=completed]')
+    window.countdownRevision=projections.at(-1).panel.revision
+  })
+  await p.clock.runFor(3100)
+  assert.match(await mirror.locator('[data-task-countdown-label]').innerText(),/^7s 后消失$/)
+  assert.equal(await p.evaluate(()=>countdownButton===document.querySelector('[data-task-state=completed]')),true)
+  assert.equal(await p.evaluate(()=>countdownRevision===projections.at(-1).panel.revision),true)
+  await p.evaluate(()=>{panel.update(frame,false);surfaces.sync()})
+  await p.clock.runFor(7200)
+  assert.equal(await mirror.locator('[data-task-state=completed]').count(),0)
+  assert.equal(await mirror.locator('[data-task-state=running]').count(),1)
+  assert.equal(await mirror.locator('[data-task-state=waiting]').count(),1)
+  await p.evaluate(()=>{panel.reset();panel.update(frame,false);surfaces.sync()})
+  assert.equal(await mirror.locator('[data-task-state=completed]').count(),0,'reconnect does not restart expiry')
   await p.evaluate(async()=>{
     const {noteTaskVisit,noteTaskNoticeVisit}=await import('/shared/work-mode.mjs')
     frame.rows=[]

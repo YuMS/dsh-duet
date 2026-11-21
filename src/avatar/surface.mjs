@@ -24,7 +24,12 @@ export function mountCompanionSurface(root,{send,changed}) {
         const tag=n.kind==='break'?'br':n.kind==='heading'?'h3':n.kind==='button'?'button':n.kind==='checkbox'?'input':'span'
         const e=element(n.action||'node'+index,tag)
         if(n.taskState)e.dataset.taskState=n.taskState;else delete e.dataset.taskState
-        if(e.textContent!==n.text)e.textContent=n.text
+        if(n.countdown!==undefined){
+          let copy=e.querySelector('[data-task-copy]'),count=e.querySelector('[data-task-countdown-label]')
+          if(!copy||!count){copy=document.createElement('span');copy.dataset.taskCopy='';count=document.createElement('small');count.dataset.taskCountdownLabel='';e.replaceChildren(copy,count)}
+          copy.textContent=n.text;copy.style.cssText='min-width:0;white-space:pre-line;overflow-wrap:anywhere'
+          count.textContent=`${n.countdown}s 后消失`;count.style.cssText='margin-left:auto;flex-shrink:0;color:#737b85;font:400 10px/1.4 system-ui;white-space:nowrap'
+        }else if(e.textContent!==n.text||e.querySelector('[data-task-countdown-label]'))e.textContent=n.text
         if(n.kind==='checkbox'){e.type='checkbox';e.checked=n.checked}
         if(n.kind==='button'||n.kind==='checkbox'){
           e.dataset.surfaceAction=n.action

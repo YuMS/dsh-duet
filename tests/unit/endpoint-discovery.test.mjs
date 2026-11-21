@@ -138,7 +138,7 @@ test('disk cache survives restart including failed-attempt cooldown and pinned D
     fetchImpl:async()=>{calls++;return response('voice.example')}}
   try {
     const first=new EndpointDiscovery(()=>config,options);await first.refreshIfDue()
-    assert.equal(statSync(cachePath).mode&0o777,0o600)
+    if(process.platform!=='win32')assert.equal(statSync(cachePath).mode&0o777,0o600)
     const second=new EndpointDiscovery(()=>config,{...options,resolve:()=>{throw Error('must not resolve')}})
     const route=(await second.plan('online'))[0]
     assert.equal(route.url,'ws://voice.example/ws?protocol=realtime_v2');assert.equal(calls,1)
@@ -165,9 +165,12 @@ test('corrupt or malformed persisted addresses are ignored without breaking star
     }
   }finally{rmSync(dir,{recursive:true,force:true})}
 })
-test('an explicit empty recommendation clears cache, but persistence failure is harmless',async()=>{
+test('an explicit empty recommendation clears cache, but persistence failure is harmless',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'duet-discovery-blocked-')),blocker=join(dir,'file')
+  t.after(()=>rmSync(dir,{recursive:true,force:true}))
+  writeFileSync(blocker,'ordinary file')
   let now=0,calls=0
-  const d=new EndpointDiscovery(()=>config,{cachePath:'/dev/null/cache.json',now:()=>now,
+  const d=new EndpointDiscovery(()=>config,{cachePath:join(blocker,'cache.json'),now:()=>now,
     fetchImpl:async()=>response(++calls===1?'47.117.104.188':'')})
   await d.refreshIfDue();assert.ok(d.cache.candidate)
   now+=DISCOVERY_INTERVAL_MS;await d.refreshIfDue()

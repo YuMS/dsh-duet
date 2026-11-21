@@ -12,6 +12,7 @@ try {
     const path=new URL(route.request().url()).pathname
     if(path.endsWith('.mjs'))return route.fulfill({contentType:'text/javascript',body:await readFile(new URL('../../src/'+path.replace('/duet/assets/',''),import.meta.url),'utf8')})
     if(path.endsWith('/voice/work-options'))return route.fulfill({json:{dedicated_workspace_id:created?'dedicated':null,workspaces:[{id:'existing',name:'项目'},...(created?[{id:'dedicated',name:'dsh-duet'}]:[])],models:{groups:[]}}})
+    if(path.endsWith('/voice/agent-tasks'))return route.fulfill({json:{main:{model_info:{provider:'local',model:'manager-small',source:'response'}},rows:[{name:'已完成的任务',state:'completed',finished_at:1,model_info:{provider:'remote',model:'executor-large',source:'response'}}]}})
     if(path.endsWith('/voice/dedicated-workspace')){
       assert.equal(route.request().method(),'POST')
       assert.match(route.request().headers()['content-type'],/application\/json/)
@@ -96,6 +97,10 @@ try {
     await (await import('/duet/assets/client/work-mode.mjs')).mountWorkMode(box)
   })
   const auto=page.getByRole('switch',{name:'自动跳转会话'})
+  await page.getByText('会话与模型',{exact:true}).click()
+  await page.getByText('最近使用：local / manager-small',{exact:true}).waitFor()
+  assert.equal(await page.getByText('dsh-duet 主会话',{exact:true}).count(),1)
+  assert.equal(await page.getByText('最近使用：remote / executor-large',{exact:true}).count(),1)
   assert.equal(await auto.getAttribute('aria-checked'),'true')
   await auto.click()
   await page.waitForFunction(()=>{const el=document.querySelector('[role=switch]');return el?.getAttribute('aria-checked')==='false'&&!el.disabled})

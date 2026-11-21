@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -34,17 +34,23 @@ test('diagnostics distinguish local logs from an unqueued connection event',asyn
   assert.equal(local.status,200);assert.equal(local.body.delivery,'local_only')
 })
 
+async function workspaceHome(t){
+  const home=await mkdtemp(join(tmpdir(),'duet-workspace-'))
+  const homeVariable=process.platform==='win32'?'USERPROFILE':'HOME'
+  const before=process.env[homeVariable]
+  process.env[homeVariable]=home
+  t.after(async()=>{if(before===undefined)delete process.env[homeVariable];else process.env[homeVariable]=before;await rm(home,{recursive:true,force:true})})
+  return home
+}
 test('dedicated workspace requires a local settings write and coalesces concurrent creation',async t=>{
-  const home=await mkdtemp(join(tmpdir(),'duet-workspace-')),before=process.env.HOME
-  process.env.HOME=home
-  t.after(async()=>{if(before===undefined)delete process.env.HOME;else process.env.HOME=before;await rm(home,{recursive:true,force:true})})
+  const home=await workspaceHome(t)
   const path='/duplex-control/api/voice/dedicated-workspace',h=makeHarness({modernWorkspaces:true})
   const headers={host:'localhost:3080',origin:'http://localhost:3080','x-duplex-settings':'1','content-type':'application/json'}
   assert.equal((await makeHarness({authRejection:401}).request('POST',path,{},headers)).status,401)
   assert.equal((await h.request('POST',path,{},{...headers,origin:'https://other.invalid'})).status,403)
   const both=await Promise.all([h.request('POST',path,{},headers),h.request('POST',path,{},headers)])
   for(const reply of both){assert.equal(reply.status,200);assert.equal(reply.body.id,'ws1')}
-  assert.deepEqual(h.workspacePaths,[join(home,'DSH-workspaces','dsh-duet')])
+  assert.deepEqual(h.workspacePaths,[await realpath(join(home,'DSH-workspaces','dsh-duet'))])
   assert.equal(h.creations.length,0)
 })
 
@@ -114,8 +120,9 @@ test('avatar activity accepts signed Desktop identity without a voice session an
   assert.equal((await h.request('POST','/duplex-control/api/avatar/activity',{...row,pending_count:-1},headers)).status,400)
 })
 
-test('a registered legacy dedicated directory keeps its identity; a same-named project is unrelated',async()=>{
-  const rows=[{id:'project',path:'/work/dsh-duet',title:'dsh-duet'},{id:'legacy',path:join(process.env.HOME,'DSH-workspaces','duet'),title:'duet'}]
+test('a registered legacy dedicated directory keeps its identity; a same-named project is unrelated',async t=>{
+  const home=await workspaceHome(t)
+  const rows=[{id:'project',path:'/work/dsh-duet',title:'dsh-duet'},{id:'legacy',path:join(home,'DSH-workspaces','duet'),title:'duet'}]
   const h=makeHarness({rows})
   const path='/duplex-control/api/voice/'
   assert.equal((await h.request('GET',path+'work-options')).body.dedicated_workspace_id,'legacy')
