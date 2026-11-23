@@ -54,7 +54,7 @@ async function fixture(t, rejectStatus, overrides = {}) {
   const host = http.createServer()
   const url = `ws://127.0.0.1:${upstream.address().port}`
   host.listen(0, '127.0.0.1'); await once(host, 'listening')
-  const install = () => registerDuetProxy({ webServer: {host:'127.0.0.1', port:host.address().port, registerUpgrade({ handler }) { host.on('upgrade', handler); return () => host.off('upgrade', handler) } } }, { ...duetConfig(), authorization: '', ...overrides, endpoints: { online: url, tts_only: url } }, overrides.feedback, overrides.canUseVoice, overrides.discoveryFactory?.(url))
+  const install = () => registerDuetProxy({ connection:{requestRejection:()=>null}, webServer: {host:'127.0.0.1', port:host.address().port, registerUpgrade({ handler }) { host.on('upgrade', handler); return () => host.off('upgrade', handler) } } }, { ...duetConfig(), authorization: '', ...overrides, endpoints: { online: url, tts_only: url } }, overrides.feedback, overrides.canUseVoice, overrides.discoveryFactory?.(url))
   let stop = install()
   t.after(async () => {
     stop()

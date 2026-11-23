@@ -1,3 +1,4 @@
+import { requestRejection } from './auth.mjs'
 import { WebSocketServer } from 'ws'
 import { spawn } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
@@ -82,10 +83,10 @@ export async function launchAvatar({onCommand,onExit,signal,size,ownerKind='brow
 export function registerAvatarHost(ctx, {launch=launchAvatar}={}) {
   const server=new WebSocketServer({noServer:true,maxPayload:65536}),clients=new Set()
   let owner=null,closed=false
-  const unregister=ctx.webServer.registerUpgrade({path:'/duet/avatar/ws',handler(req,socket,head){
+  const unregister=ctx.webServer.registerUpgrade({path:'/duet/avatar/ws',handler(req,socket,head,peer){
     let allowed=!req.headers.origin
     try{if(req.headers.origin)allowed=new URL(req.headers.origin).host===req.headers.host}catch{}
-    if(closed||!allowed||ctx.connection.requestRejection(req)||clients.size>=8){socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');return}
+    if(closed||!allowed||requestRejection(ctx,req,peer)||clients.size>=8){socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');return}
     server.handleUpgrade(req,socket,head,ws=>{
       clients.add(ws);let helper,starting=false,ended=false,frames=0,second=Date.now(),alive=Date.now()
       const lifetime=new AbortController()

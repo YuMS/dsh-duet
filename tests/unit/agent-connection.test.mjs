@@ -15,6 +15,20 @@ test('settings and connection accept the same workspace ID lengths',async()=>{
   }
 })
 const offer={session:{config:{agent_protocol:AGENT_PROTOCOL}}}
+test('task progress uses the current report or pending question, never old runs or model labels',async()=>{
+  const f=fixture(),ui=[],up=[],c=new AgentConnection(f.service,e=>up.push(e),e=>ui.push(e))
+  const ticket={assignments:[{report:{summary:'旧进度'}},{report:{summary:'正在检查页面布局'}}]}
+  f.source.taskRows=()=>[{session_id:'worker-native',task_id:'t',state:'running'}]
+  f.source.runtime={store:{tickets:{get:()=>ticket}}}
+  await c.prepare('workspace');c.offer(offer)
+  assert.equal(ui.at(-1).rows[0].progress,'正在检查页面布局')
+  assert.ok(!JSON.stringify(up).includes('正在检查页面布局'))
+  ticket.attention={id:'q',question:'要保留蓝色配色吗？'};c.showTasks()
+  assert.equal(ui.at(-1).rows[0].progress,'要保留蓝色配色吗？')
+  delete ticket.attention;ticket.assignments.push({state:'running'});c.showTasks()
+  assert.equal(ui.at(-1).rows[0].progress,undefined)
+  c.close()
+})
 test('task presentation is local: replay has no focus, live current run can navigate, other runs cannot',async()=>{
   const f=fixture(),ui=[],up=[],c=new AgentConnection(f.service,e=>up.push(e),e=>ui.push(e))
   f.source.taskRows=()=>[{session_id:'worker-native',task_id:'ticket',run_id:'run1',name:'测试',state:'running'}]

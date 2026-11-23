@@ -121,8 +121,8 @@ try {
     if (route.request().resourceType() !== 'script' || !route.request().url().includes('ui-user-questions')) return route.continue()
     const response = await route.fetch()
     let body = await response.text()
-    if (body.includes('var PendingQuestion = class')) body = body.replace('var PendingQuestion = class', 'var PendingQuestion = globalThis.__nativeQuestion = class')
-    body = body.replace('const cards = new QuestionCards(', 'const cards = globalThis.__nativeQuestionCards = new QuestionCards(')
+    body = body.replace(/\b(var|let|const)\s+PendingQuestion\s*=\s*class\b/, '$1 PendingQuestion = globalThis.__nativeQuestion = class')
+    body = body.replace(/\bconst\s+cards\s*=\s*new\s+QuestionCards\s*\(/, 'const cards = globalThis.__nativeQuestionCards = new QuestionCards(')
     await route.fulfill({ response, body })
   })
   await page.route('**/duet/assets/client/browser.mjs*', async route => {

@@ -1,3 +1,4 @@
+import { requestRejection } from './auth.mjs'
 /** Same-origin voice relay; endpoint and compatibility policy belong to the DSH host. */
 import { createRequire } from 'node:module'
 import { DuetTrace } from './trace.mjs'
@@ -69,8 +70,8 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
     acquireHostDiagnostics(ctx.webServer, config.diagnosticOptions)
   const stop = ctx.webServer.registerUpgrade({
     path: '/duplex-control/voice/ws',
-    handler(req, socket, head) {
-      const rejection = ctx.connection?.requestRejection(req)
+    handler(req, socket, head, peer) {
+      const rejection = requestRejection(ctx, req, peer)
       if (rejection) { socket.end(`HTTP/1.1 ${rejection} Forbidden\r\nConnection: close\r\n\r\n`); return }
       // No browser-selected target URLs and no cross-origin drive-by microphone sessions.
       const origin = req.headers.origin

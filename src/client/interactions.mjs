@@ -1,9 +1,11 @@
 /** Use the same pending objects as DSH's clickable question/approval cards. */
 export function nativeInteractions(ctx) {
   const firstSeen = new Map()
-  const pending = () => ctx.uiSession.sessionStatus
-    ? [...ctx.uiSession.sessionStatus.getSnapshot().values()].map(row => row.pendingInteraction).filter(Boolean)
-    : [...ctx.uiSession.pendingInteractions.getSnapshot().values()]
+  const pendingStore = ctx.uiSession.pendingInteractions
+  const store = pendingStore ?? ctx.uiSession.sessionStatus
+  const pending = () => pendingStore
+    ? [...store.getSnapshot().values()]
+    : [...store.getSnapshot().values()].map(row => row.pendingInteraction).filter(Boolean)
   const publicValue = value => {
     if (!firstSeen.has(value.key)) firstSeen.set(value.key, Date.now() / 1000)
     if (firstSeen.size > 512) firstSeen.delete(firstSeen.keys().next().value)
@@ -38,7 +40,6 @@ export function nativeInteractions(ctx) {
     return { ok: true, interaction_id: value.key }
   }
   execute.snapshot = snapshot
-  const store = ctx.uiSession.sessionStatus ?? ctx.uiSession.pendingInteractions
   execute.supportsSync = typeof store.subscribe === 'function'
   execute.subscribe = fn => store.subscribe?.(fn) ?? (() => {})
   return execute

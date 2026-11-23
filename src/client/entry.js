@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(() => {
         let active=true,dispose
-        import('/duet/assets/client/agent-tool-views.mjs?v=0.3.2').then(module=>{
+        import('/duet/assets/client/agent-tool-views.mjs?v=0.3.3').then(module=>{
           if(active&&ctx.slots&&typeof require==='function')dispose=module.mountAgentToolViews(ctx,require('react'))
         }).catch(error=>console.warn('duet task cards could not load:',error))
         return ()=>{active=false;dispose?.()}
@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => {
         let active = true
         let dispose
-        import('/duet/assets/client/browser.mjs?v=0.3.2').then(module => {
+        import('/duet/assets/client/browser.mjs?v=0.3.3').then(module => {
           if (active) dispose = module.mountDuet(ctx)
         }).catch(error => {
           console.warn('duet controls could not load:', error)

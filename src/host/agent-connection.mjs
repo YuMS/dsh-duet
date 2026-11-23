@@ -74,7 +74,12 @@ export class AgentConnection {
       const rows=this.source.taskRows().map(row=>{
         // Local notification identity; never send native ticket metadata upstream.
         const ticket=this.source.runtime?.store?.tickets?.get?.(row.session_id?.replace(/^worker-/,''))
-        return ticket?.attention?.id?{...row,attention_id:ticket.attention.id}:row
+        const run=ticket?.assignments?.at(-1)
+        // Actual executor progress, not model selection metadata. Only project
+        // the latest assignment: an older run must not look like current work.
+        const progress=ticket?.attention?.question || run?.report?.summary || ticket?.ended?.reason
+        return {...row,...(ticket?.attention?.id?{attention_id:ticket.attention.id}:{}),
+          ...(typeof progress==='string'&&progress.trim()?{progress:progress.slice(0,4000)}:{})}
       })
       const key=r=>r.task_id+':'+r.run_id
       for(const r of rows)if(r.run_id && !r.finished_at && this.previousFinished?.has(key(r)))

@@ -155,6 +155,11 @@ Desktop 设置页在当前窗口的可关闭 iframe 弹层中打开，Web 仍使
 
 可以在 duet 设置中修改音色。
 
+支持 DSH 0.2.3（目前为 0.2.3-alpha.2）：页面与 WebSocket 使用宿主准入后的 owner 身份。
+待答问题优先订阅 `pendingInteractions`，兼容旧版状态表。
+
+任务卡展示最近进度，支持多任务堆叠和悬停查看详情。
+
 ## 本地存储
 
 助手昵称保存于 `voice.json`，与 DSH 会话名称独立；默认名称为 duet。

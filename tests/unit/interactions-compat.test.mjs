@@ -1,6 +1,29 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { nativeInteractions } from '../../src/client/interactions.mjs'
+test('alpha.2 pending interactions never read the undeclared status service', async () => {
+  let listener, answer
+  const question = {key:'q1',sessionId:'s1',kind:'question',questions:[],answer:async v=>{answer=v}}
+  const values = new Map([['s1',question]])
+  const store = {getSnapshot:()=>values,subscribe:fn=>{listener=fn;return()=>{listener=null}}}
+  const uiSession = new Proxy({pendingInteractions:store}, {
+    get(target,key) {
+      if (key==='sessionStatus') throw Error('cannot get property "uiSession.sessionStatus" without inject')
+      return target[key]
+    },
+  })
+  const invoke = nativeInteractions({uiSession})
+  assert.equal(invoke.snapshot()[0].id,'q1')
+  assert.equal(invoke.supportsSync,true)
+  let changes=0
+  const stop=invoke.subscribe(()=>changes++)
+  const payload={answers:[]}
+  await invoke({method:'POST',path:'/api/interactions/q1/respond',payload})
+  assert.deepEqual(answer,payload)
+  values.clear();listener()
+  assert.equal(changes,1);assert.deepEqual(invoke.snapshot(),[])
+  stop();assert.equal(listener,null)
+})
 test('rc.2 cancellation never mistakes hiding a question for cancelling it', async () => {
   let cancelled = 0
   const question = {key:'question:im:wecom_fixture:dm:123:user:call_1',sessionId:'im:wecom_fixture:dm:123:user',

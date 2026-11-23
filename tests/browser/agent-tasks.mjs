@@ -22,7 +22,7 @@ try{
     const snapshot=window.snapshot={current:'user-session',byId:{[id]:{}}};window.draft=''
     const ctx={sessions:{list:{getSnapshot:()=>snapshot},scope:()=>({}),refresh:async()=>{},open:id=>{snapshot.current=id}},
       conversation:{input:{for:()=>({state:{getSnapshot:()=>({draft:window.draft})}})}}}
-    const presentation=()=>({anchor:document.querySelector('#pet'),mode:window.surface||'web',native:window.native===true})
+    const presentation=()=>({anchor:document.querySelector('#pet'),mode:window.surface||'web',native:window.native===true,taskLayout:value=>{const stage=document.querySelector('[data-duet-avatar-stage]');if(stage)stage.style.width=value?'128px':'100%'}})
     window.panel=agentTaskPanel(ctx,()=>document.querySelector('#controls'),()=>{},presentation)
     const {mountAvatarSurfaces}=await import('/client/avatar-surfaces.mjs')
     const {mountCompanionSurface}=await import('/avatar/surface.mjs')
@@ -34,18 +34,18 @@ try{
     panel.update({...frame,focus:null},true)
   })
   assert.ok(await p.evaluate(()=>{
-    const b=document.querySelector('[data-duet-agent-tasks]').getBoundingClientRect(),a=document.querySelector('#pet').getBoundingClientRect()
-    return b.left>=a.right+7 && Math.abs((b.top+b.bottom-a.top-a.bottom)/2)<2 && document.querySelector('[data-duet-agent-tasks]').parentNode===document.body
+    const b=document.querySelector('[data-duet-agent-tasks]').getBoundingClientRect(),a=document.querySelector('[data-duet-avatar-stage]').getBoundingClientRect()
+    return b.left>=a.left+a.width*.82 && Math.abs((b.top+b.bottom-a.top-a.bottom)/2)<2 && document.querySelector('[data-duet-agent-tasks]').parentNode===document.body
   }))
   const summary=p.locator('[data-duet-agent-tasks] summary')
   assert.equal(await summary.isVisible(),false)
-  assert.match(await p.locator('[data-duet-agent-tasks] button').innerText(),/修改已有图画\s+最近使用：local \/ test-model/)
+  assert.match(await p.locator('[data-duet-agent-tasks] [data-task-list] button').innerText(),/修改已有图画\s+运行中 · 暂无进度更新/)
   assert.equal(await p.locator('[data-task-state=running]').count(),1)
   await p.evaluate(()=>{
     const q={session_id:'worker-'+'a'.repeat(32),name:'确认页面配色',state:'waiting_user'}
     panel.update({rows:[...frame.rows,q]},false)
   })
-  assert.equal(await p.locator('[data-duet-agent-tasks] button').count(),2)
+  assert.equal(await p.locator('[data-duet-agent-tasks] [data-task-list] button').count(),2)
   assert.equal(await p.locator('[data-task-state=waiting]').count(),1)
   assert.equal(await summary.isVisible(),false)
   assert.equal(await p.locator('[data-duet-agent-tasks][data-stacked]').count(),1)
@@ -68,14 +68,16 @@ try{
   assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),true,'running task stays visible after leaving')
   await p.evaluate(()=>{snapshot.current='user-session';frame.rows[0].state='completed';frame.rows[0].finished_at=Date.now();panel.update(frame,false)})
   assert.equal(await p.evaluate(()=>snapshot.current),'user-session')
-  await p.getByRole('button',{name:/修改已有图画.*已完成/}).click()
+  const completedCard=await p.getByRole('button',{name:/修改已有图画.*已完成/}).boundingBox()
+  await p.mouse.move(completedCard.x+12,completedCard.y+12)
+  await p.locator('[data-duet-task-detail]').getByRole('button',{name:/修改已有图画.*已完成/}).click({position:{x:12,y:12}})
   await p.waitForFunction(()=>snapshot.current===frame.focus)
-  await p.waitForFunction(()=>!document.querySelector('[data-duet-agent-tasks] button'))
+  await p.waitForFunction(()=>!document.querySelector('[data-duet-agent-tasks] [data-task-list] button'))
   assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),false)
   await p.evaluate(()=>{snapshot.current='user-session';frame.rows[0].finished_at=null;frame.rows[0].state='running';panel.update(frame,false)})
   assert.equal(await p.getByRole('button',{name:/修改已有图画.*运行中/}).count(),1)
   await p.evaluate(()=>{frame.rows[0].finished_at=Date.now()-31*60_000;frame.rows[0].state='completed';panel.update(frame,false)})
-  assert.equal(await p.locator('[data-duet-agent-tasks] button').count(),0)
+  assert.equal(await p.locator('[data-duet-agent-tasks] [data-task-list] button').count(),0)
   await p.evaluate(()=>{
     const old=Date.now()-90*86400_000
     frame.rows=Array.from({length:61},(_,i)=>({name:'归档任务 '+i,state:'completed',
@@ -83,23 +85,22 @@ try{
     Object.assign(snapshot.byId,Object.fromEntries(frame.rows.map(r=>[r.session_id,{}])))
     panel.update(frame,false)
   })
-  await p.getByText('61 未读').click()
-  await p.getByRole('button',{name:/查看更多任务/}).click()
-  assert.equal(await p.getByRole('button',{name:/归档任务 60.*已完成/}).count(),1)
-  await p.keyboard.press('Escape')
   await p.evaluate(()=>document.querySelector('#pet').remove())
-  await p.waitForFunction(()=>Math.abs(document.querySelector('[data-duet-agent-tasks] summary').getBoundingClientRect().left-8-document.querySelector('#controls').getBoundingClientRect().right)<2)
+  await p.waitForFunction(()=>Math.abs(document.querySelector('[data-duet-agent-tasks]').getBoundingClientRect().left-8-document.querySelector('aside').getBoundingClientRect().left)<2)
   await p.setViewportSize({width:360,height:740})
-  await p.waitForFunction(()=>document.querySelector('[data-duet-agent-tasks] summary').getBoundingClientRect().right<=innerWidth-7)
+  await p.waitForFunction(()=>document.querySelector('[data-duet-agent-tasks]').getBoundingClientRect().right<=innerWidth-7)
   // Switching presentation must route the already-existing card, without waiting
   // for another task frame. Native actions still execute in the owning DSH page.
   await p.evaluate(()=>{window.surface='desktop';window.native=true;window.dispatchEvent(new Event('duet:avatar-presentation'));surfaces.sync()})
   await p.waitForFunction(()=>!document.querySelector('#native-mirror').hidden)
   assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),false)
   const mirror=p.locator('#native-mirror')
+  await p.waitForFunction(()=>document.querySelector('#native-mirror').querySelectorAll('button').length===1)
   assert.equal(await mirror.getByRole('button').count(),1,'closed details only projects its summary')
-  await mirror.getByRole('button',{name:/61 未读/}).click()
-  await mirror.getByRole('button',{name:/归档任务 60.*已完成/}).click()
+  await mirror.getByRole('button',{name:/61 未读/}).click({position:{x:12,y:12}})
+  await mirror.getByRole('button',{name:/查看更多任务/}).click({position:{x:12,y:12}})
+  await p.waitForFunction(()=>document.querySelector('#native-mirror').textContent.includes('归档任务 60'))
+  await mirror.getByRole('button',{name:/归档任务 60.*已完成/}).click({position:{x:12,y:12}})
   await p.waitForFunction(()=>snapshot.current==='worker-'+(60).toString(16).padStart(32,'0'))
   await p.waitForFunction(()=>!document.querySelector('#native-mirror').textContent.includes('归档任务 60'))
   await p.evaluate(()=>{
@@ -120,7 +121,7 @@ try{
   assert.equal(await mirror.locator('[data-task-state=running]').count(),1)
   assert.equal(await mirror.locator('[data-task-state=completed]').count(),1)
   assert.equal(await mirror.locator('[data-task-state=waiting]').count(),1)
-  assert.match(await mirror.locator('[data-task-state=completed]').innerText(),/任务 c.*模型尚未记录/s)
+  assert.match(await mirror.locator('[data-task-state=completed]').innerText(),/任务 c.*已完成/s)
   assert.match(await mirror.locator('[data-task-countdown-label]').innerText(),/^\d+s 后消失$/)
   assert.equal(await mirror.locator('[data-task-countdown-label]').evaluate(e=>getComputedStyle(e).fontSize),'10px')
   assert.equal(await mirror.locator('[data-task-countdown-label]').evaluate(e=>getComputedStyle(e).color),'rgb(115, 123, 133)')
@@ -179,7 +180,7 @@ try{
     for(let i=0;i<320;i++)noteTaskVisit('worker-'+i.toString(16).padStart(32,'0'),Date.now()-60*86400_000)
     panel.update(frame,false)
   })
-  assert.equal(await p.locator('[data-duet-agent-tasks] button').count(),0)
+  assert.equal(await p.locator('[data-duet-agent-tasks] [data-task-list] button').count(),0)
   await p.evaluate(()=>panel.reset())
   await p.waitForFunction(()=>document.querySelector('#native-mirror').hidden)
   assert.equal(await p.locator('[data-duet-agent-tasks]').count(),0)

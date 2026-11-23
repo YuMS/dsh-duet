@@ -19,6 +19,8 @@ duet，意为「二重奏」。这里的 duet 使用全双工语音模型，可�
 
 支持 DSH Web 和 Desktop。
 
+支持 DSH 0.2.3（目前为 0.2.3-alpha.2）。
+
 ### Web
 
 需要 Node.js 22 LTS（22.19.0 起）或 24 及以上版本。

@@ -7,6 +7,7 @@ import { avatarCloseConfirmation } from '../shared/avatar-ui.mjs'
 import {mountAvatarMenu} from '../shared/avatar-menu-ui.mjs'
 import {avatarLocalState,avatarMenuResult,noticePreferences} from '../shared/avatar-menu.mjs'
 import {AvatarActivityClock,avatarGeometry} from '../shared/avatar-activity.mjs'
+import {sidebarBounds} from './sidebar-layout.mjs'
 
 /** Page-bound presentation. The native helper cannot acquire its own voice session. */
 export function mountAvatar({controls, audio, state, notice, requestMode, onSurfaceAction=()=>{}, onMenuAction=()=>{}, focusedSession=()=>null}) {
@@ -16,6 +17,7 @@ export function mountAvatar({controls, audio, state, notice, requestMode, onSurf
   let forceWebOnly=false,configLoaded=false
   let menu,localState,lastNotice,retryTimer,connectTimer,reconnect,retryCount=0,presentationMode='off'
   let desktopPosition=null,activityStartTimer
+  let taskCards=false
   const activity=new AvatarActivityClock({snapshot:()=>{
     const p=noticePreferences(),r=root?.getBoundingClientRect(),screen=window.screen
     const position=native?desktopPosition:r?avatarGeometry({space:'viewport_css',total_resolution:{width:screen.width,height:screen.height},viewport_resolution:{width:innerWidth,height:innerHeight},avatar_position:{x:r.x,y:r.y,width:r.width,height:r.height}}):null
@@ -47,6 +49,8 @@ export function mountAvatar({controls, audio, state, notice, requestMode, onSurf
   }
   const place=()=>{
     if(!root)return
+    const taskLayout=taskCards&&location.protocol!=='dsh-app:'&&!native
+    root.toggleAttribute('data-duet-task-layout',taskLayout)
     const c=controls(),r=c?.getBoundingClientRect()
     root.hidden=!r||c.dataset.compact==='true'
     // Insert a sibling between DSH's scrollable workspace region and its footer.
@@ -61,7 +65,9 @@ export function mountAvatar({controls, audio, state, notice, requestMode, onSurf
       const scale=Math.min(avatarScale(prefs.size),width/180,innerHeight*.32/210)
       root.dataset.size=prefs.size
       root.style.cssText='position:relative;flex:0 0 auto;align-self:stretch;min-width:0;display:flex;flex-direction:column;align-items:center;pointer-events:none'
-      stage.style.cssText=`position:relative;width:${width}px;max-width:100%;height:${210*scale}px`
+      if(taskLayout)root.style.alignItems='flex-start'
+      // Move the unchanged viewport, not its camera/aspect or selected size.
+      stage.style.cssText=`position:relative;width:${width}px;max-width:100%;height:${210*scale}px;transform:translateX(${taskLayout?-width*.22:0}px)`
       caption.style.position='relative';caption.style.bottom='auto';caption.style.left='auto';caption.style.right='auto'
       caption.style.width='calc(100% - 16px)';caption.style.maxHeight=`min(${{small:90,medium:180,large:260}[noticePreferences().bubble]}px,16vh)`
       caption.style.order='-1';if(!caption.hidden)caption.scrollTop=caption.scrollHeight
@@ -74,6 +80,12 @@ export function mountAvatar({controls, audio, state, notice, requestMode, onSurf
       root.dataset.size=prefs.size;root.style.width=`${width}px`;root.style.height=`${height}px`
       root.style.left=`${Math.max(8,Math.min(innerWidth-width-8,r.left))}px`;root.style.top=`${top}px`
       stage.style.width=`${base}px`;stage.style.transform=`scale(${scale})`
+      stage.style.height='210px'
+      if(taskLayout){
+        const side=sidebarBounds(c)
+        if(side)root.style.left=`${side.left+8}px`
+        stage.style.transform=`translateX(${-width*.22}px) scale(${scale})`
+      }
       const bubbleWidth=Math.min(base-8,innerWidth-16),left=parseFloat(root.style.left)
       caption.style.width=`${bubbleWidth}px`;caption.style.left=`${Math.max(8,Math.min(innerWidth-bubbleWidth-8,left+width/2-bubbleWidth/2))-left}px`
       caption.style.maxHeight=`${Math.max(30,Math.min({small:90,medium:180,large:260}[noticePreferences().bubble],top-18))}px`
@@ -214,7 +226,8 @@ export function mountAvatar({controls, audio, state, notice, requestMode, onSurf
     .then(r=>r.ok?r.json():{}).then(config=>{forceWebOnly=config.avatar?.web_only===true})
     .catch(()=>{}).finally(()=>{clearTimeout(configTimeout);configLoaded=true;if(!dead)start()})
   return {
-    presentation(){return {native,mode:presentationMode,anchor:root&&!root.hidden?root:null}},
+    presentation(){return {native,mode:presentationMode,anchor:root&&!root.hidden?root:null,
+      taskLayout(value){const next=value===true&&location.protocol!=='dsh-app:'&&!native;if(next!==taskCards){taskCards=next;place()}}}},
     surface(value){return native&&send(value)},
     syncToggle,
     setSize,

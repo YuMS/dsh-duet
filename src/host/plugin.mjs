@@ -1,5 +1,6 @@
 /** duet Host entry: session operations, authenticated settings, and client assets. */
 
+import { requestRejection } from './auth.mjs'
 import { readFile, mkdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -583,9 +584,9 @@ export function apply(ctx, options = {}) {
     return () => syncFeed.close()
   })
 
-  const handleApi = async (req, res, pathname) => {
+  const handleApi = async (req, res, pathname, peer) => {
     if(pathname===`${ROUTE}/api/voices`){
-      const rejection=ctx.connection.requestRejection(req)
+      const rejection=requestRejection(ctx, req, peer)
       if(rejection){sendError(res,rejection,'DSH connection required');return}
       try {
         if(req.method==='GET'){sendJson(res,200,await voices.refreshAvailability());return}
@@ -596,14 +597,14 @@ export function apply(ctx, options = {}) {
       return
     }
     if(req.method==='POST'&&pathname===`${ROUTE}/api/avatar/activity`){
-      const rejection=ctx.connection.requestRejection(req)
+      const rejection=requestRejection(ctx, req, peer)
       if(rejection){sendError(res,rejection,'DSH connection required');return}
       if(!identityWriteAllowed(req)){sendError(res,403,'same-origin activity request required');return}
       try{const value=await readJson(req);if(JSON.stringify(value).length>4096){sendError(res,413,'activity too large');return}sendJson(res,202,await avatarActivity.enqueue(value,feedback.user(req)))}
       catch{sendError(res,400,'invalid_avatar_activity')}return
     }
     if (req.method === 'POST' && pathname === `${ROUTE}/api/duet/nickname`) {
-      const rejection = ctx.connection.requestRejection(req)
+      const rejection = requestRejection(ctx, req, peer)
       if (rejection) { sendError(res, rejection, '请先打开并登录 DSH 主页面'); return }
       const boundRPC = req.headers['x-duplex-control-client'] === 'realtime-client-rpc-v1' && browserOwner(req)
       if (!identityWriteAllowed(req) && !boundRPC) { sendError(res, 403, 'same-origin nickname request required'); return }
@@ -623,7 +624,7 @@ export function apply(ctx, options = {}) {
       return
     }
     if(req.method==='POST' && pathname===`${ROUTE}/api/feedback`){
-      const rejection = ctx.connection.requestRejection(req)
+      const rejection = requestRejection(ctx, req, peer)
       if(rejection){sendError(res,rejection,'请先打开并登录 DSH 主页面');return}
       if(!identityWriteAllowed(req)){sendError(res,403,'same-origin feedback request required');return}
       try {sendJson(res,201,await feedback.submit(req,await readJson(req)))}
@@ -636,7 +637,7 @@ export function apply(ctx, options = {}) {
       return
     }
     if (req.method === 'POST' && pathname === `${ROUTE}/api/voice/diagnostic`) {
-      const rejection = ctx.connection.requestRejection(req)
+      const rejection = requestRejection(ctx, req, peer)
       if (rejection) { sendError(res, rejection, 'DSH connection required'); return }
       if (!identityWriteAllowed(req)) { sendError(res, 403, 'same-origin diagnostic request required'); return }
       const body = await readJson(req)
@@ -653,7 +654,7 @@ export function apply(ctx, options = {}) {
       return
     }
     if (req.method === 'POST' && pathname === `${ROUTE}/api/voice/dedicated-workspace`) {
-      const rejection=ctx.connection.requestRejection(req)
+      const rejection=requestRejection(ctx, req, peer)
       if(rejection || !identityWriteAllowed(req)){sendError(res,rejection||403,'DSH connection required');return}
       if(await workPolicy.get()==='direct_only'){sendError(res,403,'agent_mode_disabled');return}
       try {
@@ -671,7 +672,7 @@ export function apply(ctx, options = {}) {
       return
     }
     if(req.method==='GET' && pathname===`${ROUTE}/api/voice/agent-tasks`){
-      const rejection=ctx.connection.requestRejection(req)
+      const rejection=requestRejection(ctx, req, peer)
       if(rejection){sendError(res,rejection,'DSH connection required');return}
       const policy=effectiveWorkPolicy(settings.public(),await workPolicy.get())
       if(policy.work_mode!=='agent'||policy.agent_permission_version!==1){sendJson(res,200,{rows:[]});return}
@@ -1271,7 +1272,7 @@ export function apply(ctx, options = {}) {
     }
     if (req.method === 'GET' && [ `${ROUTE}/api/results`, `${ROUTE}/api/results/wait` ].includes(pathname)) {
       if (pathname.endsWith('/wait')) {
-        const rejection = ctx.connection.requestRejection(req)
+        const rejection = requestRejection(ctx, req, peer)
         if (rejection) { sendError(res, rejection, '请先打开并登录 DSH 主页面'); return }
       }
       const url = new URL(req.url || '/', 'http://localhost')
@@ -1311,16 +1312,18 @@ export function apply(ctx, options = {}) {
     sendError(res, 404, 'not found')
   }
 
-  const handler = async (req, res) => {
+  const handler = async (req, res, peer) => {
     const pathname = new URL(req.url || '/', 'http://localhost').pathname
     try {
+      const rejection = requestRejection(ctx, req, peer)
+      if (rejection) { sendError(res, rejection, '请先打开并登录 DSH 主页面'); return }
       if ([PAGE_ROUTE, `${PAGE_ROUTE}/`, ROUTE, `${ROUTE}/`, `${ROUTE}/api/voice/config`, `${ROUTE}/api/voice/work-options`, `${ROUTE}/api/voice/service-info`, `${ROUTE}/api/voice/diagnostic`, `${ROUTE}/api/announcements`].includes(pathname)) {
-        const rejection = ctx.connection.requestRejection(req)
+        const rejection = requestRejection(ctx, req, peer)
         if (rejection) { sendError(res, rejection, '请先打开并登录 DSH 主页面'); return }
       }
       const tutorialAudio = pathname.match(/^\/duplex-control\/tutorial-audio\/(modes_broadcast|modes_interaction|broadcast|input|edit|clear|reinput|send|switch)\.wav$/)
       if (req.method === 'GET' && tutorialAudio) {
-        const rejection = ctx.connection.requestRejection(req)
+        const rejection = requestRejection(ctx, req, peer)
         if (rejection) { sendError(res, rejection, '请先打开并登录 DSH 主页面'); return }
         const body = await readFile(new URL(`../../assets/tutorial-audio/${tutorialAudio[1]}.wav`, import.meta.url))
         res.writeHead(200, { 'content-type': 'audio/wav', 'cache-control': 'private, max-age=3600', 'content-length': body.length })
@@ -1353,7 +1356,7 @@ export function apply(ctx, options = {}) {
         res.end(body)
         return
       }
-      await handleApi(req, res, pathname)
+      await handleApi(req, res, pathname, peer)
     } catch (error) {
       audit.event('host.api_error', { method: req.method, path: pathname, message: error.message, stack: error.stack })
       const status = Number.isInteger(error?.status) ? error.status : 500
@@ -1364,6 +1367,6 @@ export function apply(ctx, options = {}) {
     }
   }
 
-  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: ROUTE, handler }))
-  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: PAGE_ROUTE, handler }))
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: ROUTE, auth: 'required', handler }))
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: PAGE_ROUTE, auth: 'required', handler }))
 }

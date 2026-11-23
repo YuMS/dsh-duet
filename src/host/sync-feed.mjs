@@ -1,3 +1,4 @@
+import { requestRejection } from './auth.mjs'
 import { WebSocketServer } from 'ws'
 
 /** Authenticated local event stream. No timers that query DSH state. */
@@ -6,10 +7,10 @@ export function registerSyncFeed(ctx, { snapshot, touch, commands }) {
   const clients = new Set()
   const unregister = ctx.webServer.registerUpgrade({
     path: '/duplex-control/sync/ws',
-    handler(req, socket, head) {
+    handler(req, socket, head, peer) {
       let allowed = !req.headers.origin
       try { if (req.headers.origin) allowed = new URL(req.headers.origin).host === req.headers.host } catch {}
-      if (!allowed || ctx.connection?.requestRejection(req) || clients.size >= 64) {
+      if (!allowed || requestRejection(ctx, req, peer) || clients.size >= 64) {
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return
       }
       server.handleUpgrade(req, socket, head, ws => {

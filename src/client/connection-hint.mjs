@@ -1,5 +1,5 @@
 /** A brief, non-modal invitation after the microphone is actually ready. */
-import {normalizeGuidance} from '../shared/connection-guidance.mjs?v=0.3.2'
+import {normalizeGuidance} from '../shared/connection-guidance.mjs?v=0.3.3'
 import {AGENT_WORKSPACE_NOTICE,agentEntryReminder} from '../shared/work-mode.mjs'
 export function mountConnectionHint(controls, { duration = 8000, onShown = ()=>{}, onSettings = ()=>{} } = {}) {
   const hint = document.createElement('div')

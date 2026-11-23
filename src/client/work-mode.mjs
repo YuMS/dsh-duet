@@ -1,5 +1,5 @@
 import { WORK_MODES, AGENT_PERMISSION_TEXT, AGENT_WORKSPACE_NOTICE, workModeIssue, TASK_STATES, taskModelLabel } from '../shared/work-mode.mjs'
-import { identityFetch } from './identity.mjs?v=0.3.2'
+import { identityFetch } from './identity.mjs?v=0.3.3'
 
 const styles = `
 .dt-work{--ink:light-dark(#20392d,#e3eee7);--muted:light-dark(#53695c,#a7b9ae);--edge:light-dark(#cbd7cf,#3b4a40);--surface:light-dark(#fff,#191f1d);--tint:light-dark(#eef7f0,#203329);--accent:light-dark(#236548,#b3e9cb);color:var(--ink);font:normal 14px/1.5 system-ui,sans-serif;text-align:start;display:grid;gap:16px;container-type:inline-size}
