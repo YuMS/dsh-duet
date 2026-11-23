@@ -8,6 +8,7 @@ mod position;
 mod assets;
 mod owner_window;
 mod fullscreen;
+mod process_tree;
 use hit_mask::HitMask;
 #[cfg(target_os = "macos")]
 extern "C" {
@@ -42,8 +43,10 @@ fn hide_avatar(app: tauri::AppHandle, window: tauri::WebviewWindow) {
     app.exit(0);
 }
 #[tauri::command]
-fn show_avatar(window: tauri::WebviewWindow, state: tauri::State<'_, fullscreen::State>) -> Result<(), String> {
-    fullscreen::refresh(&window, &state, true)
+fn show_avatar(window: tauri::WebviewWindow, state: tauri::State<'_, fullscreen::State>) -> Result<serde_json::Value, String> {
+    fullscreen::refresh(&window, &state, true)?;
+    let state = state.lock().map_err(|_| "Visibility unavailable")?;
+    Ok(serde_json::json!({"visible":state.visible,"fullscreen_suppressed":!state.desired()}))
 }
 #[tauri::command]
 fn avatar_geometry(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
@@ -102,6 +105,10 @@ fn set_avatar_size(window: tauri::WebviewWindow, size: String, panel: Option<boo
     resize_avatar(&window,&size,false,panel.unwrap_or(false))
 }
 fn main() {
+    // Keep the non-inheritable job handle alive until this helper exits. Windows
+    // closes it even after forced termination, cleaning up our WebView2 children.
+    #[cfg(target_os = "windows")]
+    process_tree::attach().expect("Unable to isolate avatar process tree");
     owner_window::capture();
     // Portable Windows helper: npm does not run a WebView2 installer.
     // Report a dedicated failure to the Host instead of silently closing.
@@ -139,14 +146,20 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             app.remove_menu()?;
-            let win = WebviewWindowBuilder::new(app, "avatar", WebviewUrl::CustomProtocol(tauri::Url::parse("duet-avatar://localhost/index.html")?))
+            let builder = WebviewWindowBuilder::new(app, "avatar", WebviewUrl::CustomProtocol(tauri::Url::parse("duet-avatar://localhost/index.html")?))
                 .title("duet").inner_size(280.0, 490.0).transparent(true)
                 .decorations(false).shadow(false).always_on_top(true).skip_taskbar(true)
                 .resizable(false).focused(false).accept_first_mouse(true).visible(false)
                 .on_navigation(|url| url.path()=="/index.html" && url.query().is_none()
                     && ((url.scheme()=="duet-avatar"&&url.host_str()==Some("localhost"))
                     || (url.scheme()=="http"&&url.host_str()==Some("duet-avatar.localhost"))))
-                .initialization_script(&init).build()?;
+                .initialization_script(&init);
+            // The carrier has no cookies/account data to retain. A fresh private
+            // directory avoids locks left by an earlier crashed WebView2 runtime.
+            #[cfg(target_os = "windows")]
+            let builder = builder.data_directory(std::path::PathBuf::from(
+                std::env::var("DUET_AVATAR_USER_DATA").expect("Missing private WebView2 directory")));
+            let win = builder.build()?;
             #[cfg(target_os = "macos")]
             if unsafe { duet_install_window_geometry(win.ns_window()?) } != 1 {
                 return Err(std::io::Error::other("Unable to configure avatar placement").into());

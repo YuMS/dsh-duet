@@ -59,10 +59,10 @@ export function mountDuet(ctx) {
   const pageError = event => diagnostic({ event: 'browser.error', message: String(event.message || event.reason?.message || event.reason), stack: event.error?.stack || event.reason?.stack })
   window.addEventListener('error', pageError)
   window.addEventListener('unhandledrejection', pageError)
-  const notice = (text, { upgrade = false, releaseNotes } = {}) => {
+  const notice = (text, { upgrade = false, ...details } = {}) => {
     connectionHint?.dismiss()
     if (upgrade) { ratingPanel?.dispose(); ratingPanel = null }
-    notices.show(text, { upgrade, releaseNotes })
+    notices.show(text, { upgrade, ...details })
   }
   const draw = state => {
     if (pollGeneration !== state.generation) {

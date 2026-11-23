@@ -117,7 +117,8 @@ const close=()=>{
   model?.update({...frame,rms:0,text:''});model?.dispose();socket.close()
   void invoke('hide_avatar').catch(()=>{})
 }
-const notifyReady=()=>{if(failed)send({type:'failed'});else if(ready)send({type:'ready',protocol:AVATAR_UI_PROTOCOL})}
+let nativeVisibility
+const notifyReady=()=>{if(failed)send({type:'failed'});else if(ready)send({type:'ready',protocol:AVATAR_UI_PROTOCOL,...(typeof nativeVisibility?.visible==='boolean'?{window_visible:nativeVisibility.visible,fullscreen_suppressed:nativeVisibility.fullscreen_suppressed===true}:{})})}
 // Serialize native resize and hit-mask updates, including rapid preference changes.
 // The owning page persists the preference; this window never opens a second store.
 const requestSize=size=>{
@@ -139,7 +140,7 @@ const requestSize=size=>{
   return sizePending
 }
 try{model=mountAvatarRenderer($('avatar'),{modelURL:'./character.glb',onReady(){
-  void Promise.all([pointerReady,requestSize(desiredSize)]).then(async()=>{if(closed||failed)return;ready=true;await refreshMask();if(closed)return;notifyReady();return invoke('show_avatar')})
+  void Promise.all([pointerReady,requestSize(desiredSize)]).then(async()=>{if(closed||failed)return;nativeVisibility=await invoke('show_avatar');if(closed)return;ready=true;await refreshMask();if(closed)return;notifyReady()})
     .catch(()=>{failed=true;send({type:'failed'});close()})
 },onError(){failed=true;notifyReady()}})}catch{failed=true}
 socket.onopen=notifyReady
@@ -148,7 +149,8 @@ socket.onmessage=e=>{
   liveness.touch()
   try{
     const message=JSON.parse(e.data)
-    if(message.type==='frame'){
+    if(message.type==='shutdown'){close()}
+    else if(message.type==='frame'){
       frame=avatarFrame(message);last=Date.now();model?.update(frame);void requestSize(frame.size)
       if(frame.mode==='off')clearInput();caption();controls()
     }else if(message.type==='input_effect'){

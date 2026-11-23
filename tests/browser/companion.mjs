@@ -33,13 +33,16 @@ try{
  await page.addInitScript(({url,token})=>{
   window.__DUET_AVATAR__={url,token};window.calls=[]
   window.nativeListeners={}
-  window.__TAURI__={event:{listen:async(name,fn)=>{nativeListeners[name]=fn;return()=>{delete nativeListeners[name];calls.push({name:'unlisten'})}}},core:{invoke:async(name,args)=>{calls.push({name,args});if(name==='set_avatar_size')return resizeFixture(args);if(name==='avatar_geometry')return{total_resolution:{width:6400,height:2160},desktop_origin:{x:-2560,y:0},window_origin:{x:-1500,y:100},scale:2}}}}
+  window.__TAURI__={event:{listen:async(name,fn)=>{nativeListeners[name]=fn;return()=>{delete nativeListeners[name];calls.push({name:'unlisten'})}}},core:{invoke:async(name,args)=>{calls.push({name,args});if(name==='show_avatar'){await new Promise(resolve=>{window.allowShow=resolve});return{visible:true,fullscreen_suppressed:false}}if(name==='set_avatar_size')return resizeFixture(args);if(name==='avatar_geometry')return{total_resolution:{width:6400,height:2160},desktop_origin:{x:-2560,y:0},window_origin:{x:-1500,y:100},scale:2}}}}
   window.AudioContext=class{constructor(){throw Error('companion must not play audio')}}
  },{url:`ws://127.0.0.1:${server.address().port}`,token})
  await page.goto(`http://127.0.0.1:${server.address().port}/`)
  console.log('Desktop: page loaded')
  await page.waitForFunction(()=>calls.some(c=>c.name==='show_avatar'),null,{timeout:60000})
- assert.ok(messages.some(m=>m.type==='ready'))
+ assert.equal(messages.some(m=>m.type==='ready'),false,'readiness must wait for native show completion')
+ await page.evaluate(()=>allowShow())
+ for(let i=0;i<100&&!messages.some(m=>m.type==='ready');i++)await page.waitForTimeout(20)
+ assert.equal(messages.find(m=>m.type==='ready')?.window_visible,true)
  await page.waitForFunction(()=>calls.some(c=>c.name==='avatar_geometry'))
  for(let i=0;i<100&&!messages.some(m=>m.type==='avatar_geometry');i++)await page.waitForTimeout(20)
  const geometry=messages.find(m=>m.type==='avatar_geometry').position

@@ -1,6 +1,35 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DuetState, PLUGIN_VERSION, compatibilityNotice } from '../../src/shared/state.mjs'
+import { DuetState, PLUGIN_VERSION, compatibilityNotice, updateDetails } from '../../src/shared/state.mjs'
+
+test('upgrade history selects only installed < release <= recommended, numerically and newest first',()=>{
+  const info={recommended_client_version:'0.3.10',recommended_release_notes:'latest',release_history:[
+    {version:'0.3.2',notes:'installed'}, {version:'0.3.3',notes:'cards'},
+    {version:'0.3.10',notes:'new'}, {version:'0.4.0',notes:'future'},
+    {version:'bad',notes:'bad'}, null, {version:'0.3.8',notes:{bad:true}},
+  ]}
+  assert.deepEqual(updateDetails(info,'0.3.2').releases,[{version:'0.3.10',notes:'new'},{version:'0.3.3',notes:'cards'}])
+  assert.deepEqual(updateDetails(info,'0.3.3').releases,[{version:'0.3.10',notes:'new'}])
+  assert.deepEqual(updateDetails(info,'0.3.10').releases,[])
+  assert.deepEqual(updateDetails(info,'0.4.0').releases,[])
+  assert.deepEqual(updateDetails({recommended_client_version:'0.3.10',recommended_release_notes:'legacy'},'0.3.2').releases,
+    [{version:'0.3.10',notes:'legacy'}])
+  assert.deepEqual(updateDetails({recommended_client_version:'0.3.10',release_history:{}},'0.3.2').releases,[])
+})
+
+test('both advisory and required upgrade notices carry the version range',async()=>{
+  const notices=[],state=new DuetState({notice:(...v)=>notices.push(v),connect:()=>({close(){}})})
+  const compatibility={recommended_client_version:'0.9.99',release_history:[{version:'0.9.99',notes:'update'}]}
+  await state.setMode('online')
+  state.receive({type:'compatibility',compatibility})
+  state.fail('plugin_upgrade_required',{compatibility})
+  for(const [,options] of notices){
+    assert.equal(options.currentVersion,PLUGIN_VERSION)
+    assert.equal(options.targetVersion,'0.9.99')
+    assert.deepEqual(options.releases,compatibility.release_history)
+  }
+  await state.dispose()
+})
 
 test('individual voice failure explains recovery without turning off voice mode',async()=>{
   for(const [code,pattern] of [['voice_disabled',/停用/],['voice_audio_missing',/重新上传/],['voice_not_found',/重新新增/]]){

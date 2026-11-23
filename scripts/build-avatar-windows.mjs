@@ -33,6 +33,7 @@ try {
   run('package-check',process.execPath,['scripts/check-package.mjs'])
   run('verify-helper',process.execPath,['scripts/verify-avatar-package.mjs','--platforms','win32-x64'])
   run('native-smoke',process.execPath,['scripts/test-avatar-native.mjs'])
+  run('native-lifecycle',process.execPath,['scripts/test-avatar-windows-lifecycle.mjs'])
   const manifest=JSON.parse(await readFile(join(root,'desktop/bin/win32-x64/manifest.json'),'utf8'))
   report.sourceSha256=manifest.sourceSha256
   report.pluginVersion=manifest.version

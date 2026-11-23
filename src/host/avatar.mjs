@@ -4,6 +4,9 @@ import { spawn } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import {mkdtempSync,rm} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import { AVATAR_SIZES, avatarSize, avatarFrame, avatarInputEffect, AvatarHeartbeat } from '../shared/avatar.mjs'
 import { AVATAR_UI_PROTOCOL, avatarSurface, avatarSurfaceAction } from '../shared/avatar-surface.mjs'
 import {verifyDesktopAssets,desktopAssetsPath} from './avatar-assets.mjs'
@@ -21,7 +24,7 @@ export function sameSecret(a, b) {
 }
 
 /** Private, loopback-only IPC. The companion never receives DSH/server credentials. */
-export async function launchAvatar({onCommand,onExit,signal,size,ownerKind='browser'}, {spawnImpl=spawn, binary=avatarBinary(), env=process.env, assets=desktopAssetsPath}={}) {
+export async function launchAvatar({onCommand,onExit,signal,size,ownerKind='browser'}, {spawnImpl=spawn, binary=avatarBinary(), env=process.env, assets=desktopAssetsPath,platform=process.platform}={}) {
   if(!binary)throw Error('desktop_platform_unsupported')
   if(process.platform==='linux'&&!env.DISPLAY&&!env.WAYLAND_DISPLAY)throw Error('desktop_display_unavailable')
   try{accessSync(binary,constants.X_OK)}catch{throw Error('desktop_helper_missing')}
@@ -30,14 +33,21 @@ export async function launchAvatar({onCommand,onExit,signal,size,ownerKind='brow
   const ipc=new WebSocketServer({host:'127.0.0.1',port:0,maxPayload:2048,
     verifyClient:({req})=>sameSecret(req.headers['sec-websocket-protocol'],`duet-avatar-${token}`)})
   await new Promise((resolve,reject)=>{ipc.once('listening',resolve);ipc.once('error',reject)})
-  let child,peer,closed=false,ready=false,timeout,killTimer,abort
+  let child,peer,closed=false,ready=false,timeout,killTimer,abort,userData,visibility=null
+  const isRunning=()=>child&&child.exitCode===null&&child.signalCode==null
+  const cleanupData=()=>{if(userData){const path=userData;userData=null;rm(path,{recursive:true,force:true,maxRetries:10,retryDelay:200},()=>{})}}
+  const closeIPC=()=>{for(const ws of ipc.clients)ws.terminate();ipc.close()}
   const stop=()=>{
     if(closed)return
     closed=true;clearTimeout(timeout)
     signal?.removeEventListener('abort',abort)
-    for(const ws of ipc.clients)ws.terminate()
-    ipc.close()
-    if(child&&child.exitCode===null){child.kill();killTimer=setTimeout(()=>{if(child.exitCode===null)child.kill('SIGKILL')},2000);killTimer.unref()}
+    if(isRunning()){
+      // Let the renderer close WebView2 normally before forcing the native tree down.
+      // The Windows helper owns a kill-on-close Job Object for its descendants.
+      killTimer=setTimeout(()=>{closeIPC();if(isRunning())child.kill('SIGKILL')},2000);killTimer.unref()
+      if(peer?.readyState===1){try{peer.send(JSON.stringify({type:'shutdown'}))}catch{closeIPC();child.kill()}}
+      else {closeIPC();if(!peer)child.kill()}
+    }else {closeIPC();cleanupData()}
   }
   const initialized=new Promise((resolve,reject)=>{
     const fail=code=>{if(closed)return;stop();if(!ready)reject(Error(code));else onExit(code)}
@@ -48,9 +58,15 @@ export async function launchAvatar({onCommand,onExit,signal,size,ownerKind='brow
       if(peer){ws.close(1008);return}peer=ws
       ws.on('error',()=>{})
       ws.on('message',raw=>{
+        if(closed)return
         try{
           const msg=JSON.parse(raw)
-          if(msg.type==='ready'&&!ready){if(msg.protocol!==AVATAR_UI_PROTOCOL){fail('desktop_helper_upgrade_required');return}ready=true;clearTimeout(timeout);resolve()}
+          if(msg.type==='ready'&&!ready){
+            if(msg.protocol!==AVATAR_UI_PROTOCOL){fail('desktop_helper_upgrade_required');return}
+            if(typeof msg.window_visible==='boolean')visibility={visible:msg.window_visible,fullscreenSuppressed:msg.fullscreen_suppressed===true}
+            if(visibility&&!visibility.visible&&!visibility.fullscreenSuppressed){fail('desktop_renderer_failed');return}
+            ready=true;clearTimeout(timeout);resolve()
+          }
           else if(ready&&msg.type==='surface_action')onCommand(avatarSurfaceAction(msg))
           else if(ready&&msg.type==='menu_action')onCommand(avatarMenuAction(msg))
           else if(ready&&msg.type==='avatar_geometry')onCommand({type:'avatar_geometry',position:avatarGeometry(msg.position)})
@@ -67,16 +83,18 @@ export async function launchAvatar({onCommand,onExit,signal,size,ownerKind='brow
     try{
       // No shell, user-supplied executable, detached daemon, inherited credentials, or CLI token.
       const safeEnv=Object.fromEntries(['PATH','HOME','USERPROFILE','LOCALAPPDATA','APPDATA','SYSTEMROOT','WINDIR','TEMP','TMP','TMPDIR','DISPLAY','WAYLAND_DISPLAY','XDG_RUNTIME_DIR','DBUS_SESSION_BUS_ADDRESS','LANG','LC_ALL'].filter(k=>env[k]).map(k=>[k,env[k]]))
-      child=spawnImpl(binary,[],{stdio:'ignore',windowsHide:true,env:{...safeEnv,
+      if(platform==='win32')userData=mkdtempSync(join(tmpdir(),'dsh-duet-webview-'))
+      child=spawnImpl(binary,[],{stdio:'ignore',windowsHide:false,env:{...safeEnv,
+        ...(userData?{DUET_AVATAR_USER_DATA:userData}:{}),
         DUET_AVATAR_ASSETS:assetsPath,DUET_AVATAR_IPC:`ws://127.0.0.1:${ipc.address().port}`,DUET_AVATAR_TOKEN:token,DUET_AVATAR_SIZE:avatarSize(size),
         DUET_AVATAR_OWNER_KIND:['desktop','chrome','edge','firefox','safari','browser'].includes(ownerKind)?ownerKind:'browser'}})
-      child.once('error',()=>fail('desktop_launch_failed'))
-      child.once('exit',code=>{clearTimeout(killTimer);fail(code===78?'desktop_webview2_missing':'desktop_closed')})
+      child.once('error',()=>{cleanupData();fail('desktop_launch_failed')})
+      child.once('exit',code=>{clearTimeout(killTimer);closeIPC();cleanupData();fail(code===78?'desktop_webview2_missing':'desktop_closed')})
       timeout=setTimeout(()=>fail('desktop_start_timeout'),20000);timeout.unref()
-    }catch{fail('desktop_launch_failed')}
+    }catch{cleanupData();fail('desktop_launch_failed')}
   })
   await initialized
-  return {close:stop,send(frame){if(peer?.readyState===1&&peer.bufferedAmount<16000)peer.send(JSON.stringify(frame))}}
+  return {visibility,close:stop,send(frame){if(peer?.readyState===1&&peer.bufferedAmount<16000)peer.send(JSON.stringify(frame))}}
 }
 
 /** Exactly one owning DSH page per Host; other pages cannot drive its companion. */

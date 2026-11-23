@@ -3,6 +3,31 @@ export const PLUGIN_VERSION = '0.3.3'
 export const IDLE_RELEASE_MS = 60_000
 
 const safeVersion = value => typeof value === 'string' && value.length <= 32 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) ? value : ''
+const compareVersions = (a, b) => a.split('.').reduce((result, v, i) => result || Math.sign(Number(v) - Number(b.split('.')[i])), 0)
+
+/** Display only upgrades the installed client has not received yet. */
+export function updateDetails(info = {}, current = PLUGIN_VERSION) {
+  const target = safeVersion(info.recommended_client_version)
+  const entries = new Map()
+  if (safeVersion(current) && target && compareVersions(target, current) > 0) {
+    for (const row of (Array.isArray(info.release_history) ? info.release_history.slice(0, 64) : [])) {
+      if (!safeVersion(row?.version) || typeof row.notes !== 'string' || !row.notes.trim()) continue
+      if (compareVersions(row.version, current) > 0 && compareVersions(row.version, target) <= 0) {
+        entries.set(row.version, {version: row.version, notes: row.notes.slice(0, 1000).trim()})
+      }
+    }
+    if (!entries.has(target) && typeof info.recommended_release_notes === 'string' && info.recommended_release_notes.trim()) {
+      entries.set(target, {version: target, notes: info.recommended_release_notes.slice(0, 1000).trim()})
+    }
+  }
+  let remaining = 16000
+  const releases = [...entries.values()].sort((a, b) => compareVersions(b.version, a.version)).filter(row => {
+    remaining -= row.notes.length
+    return remaining >= 0
+  })
+  return {currentVersion: current, targetVersion: target, releases,
+    releaseNotes: info.recommended_release_notes}
+}
 export function compatibilityNotice(code, details = {}, mode = 'online') {
   const key = mode === 'tts_only' ? 'tts_only' : 'online'
   const info = details.compatibility || {}
@@ -85,11 +110,11 @@ export class DuetState {
       if(event.reconnect_required===true&&this.mode!=='off')void this.replaceConnection({reason:'voice_policy_changed'})
     } else if (event.type === 'compatibility') {
       const recommended = safeVersion(event.compatibility?.recommended_client_version)
-      const newer = recommended && recommended.split('.').reduce((result, v, i) => result || Math.sign(Number(v) - Number(PLUGIN_VERSION.split('.')[i])), 0) > 0
+      const newer = recommended && compareVersions(recommended, PLUGIN_VERSION) > 0
       if (newer && this.recommendationShown !== recommended) {
         this.recommendationShown = recommended
         this.notice(`当前插件 ${PLUGIN_VERSION}，推荐更新到 ${recommended}。当前连接可以继续使用。`, {
-          upgrade: true, releaseNotes: event.compatibility?.recommended_release_notes,
+          upgrade: true, ...updateDetails(event.compatibility),
         })
       }
     } else if (event.type === 'ready') {
@@ -122,7 +147,7 @@ export class DuetState {
     const compatibility = compatibilityNotice(code, details, this.mode)
     if (compatibility) {
       this.notice(compatibility, { upgrade: code !== 'client_version_unsupported',
-        releaseNotes: details.compatibility?.recommended_release_notes || details.policy?.recommended_release_notes })
+        ...updateDetails({...details.policy, ...details.compatibility}) })
       void this.setMode('off', {reason:'error',code})
       return
     }

@@ -14,8 +14,9 @@ export function assertPointerLockScope(source) {
  assert.ok(source.indexOf('let size=win.inner_size().ok();')<match.index)
  assert.ok(source.indexOf('win.emit("avatar-pointer"')>end)
  assert.ok(source.indexOf('win.set_ignore_cursor_events(target)')>end)
- // The other two locks are statement-scoped assignments, released at semicolon.
- assert.equal((source.match(/\.lock\(\)/g)||[]).length,3,'review every newly added lock')
+ // Two assignment locks and one pure visibility snapshot; no native calls under either state lock.
+ assert.equal((source.match(/\.lock\(\)/g)||[]).length,4,'review every newly added lock')
+ assert.match(source,/let state = state\.lock\(\)\.map_err\([^\n]+\?;\n\s*Ok\(serde_json::json!\(\{"visible":state\.visible,"fullscreen_suppressed":!state\.desired\(\)\}\)\)\n\}/)
  assert.match(source,/\*state\.lock\(\)\.map_err\([^\n]+\? = value;/)
  assert.match(source,/\*state\.lock\(\)\.map_err\([^\n]+\?=HitMask::default\(\);\n\s*resize_avatar/)
 }

@@ -15,6 +15,8 @@ try {
       return child
     },
   })
+  if(process.platform==='win32'&&helper.visibility?.visible!==true)
+    throw Error('Native Windows smoke requires an actually visible window on a non-fullscreen desktop')
   helper.send({type:'frame',mode:'off',rms:0,text:''})
   await delay(1000)
   helper.send({type:'surface',panel:{id:'s1',revision:1,target:'online',nodes:[{kind:'heading',text:'桌面提示验收'},{kind:'text',text:'这里只验证本地窗口，没有连接语音服务。'}]}})
@@ -26,7 +28,8 @@ try {
   helper.close()
   const result=await Promise.race([exited,delay(5000,'timeout')])
   if(result==='timeout')throw Error('Native helper did not exit after close')
-  console.log(JSON.stringify({platform:process.platform,arch:process.arch,rendererReady:true,exit:result,visualInteractionVerified:false}))
+  if(result.code!==0)throw Error(`Native helper required forced shutdown: ${JSON.stringify(result)}`)
+  console.log(JSON.stringify({platform:process.platform,arch:process.arch,rendererReady:true,visibility:helper.visibility,exit:result,visualInteractionVerified:false}))
 }finally {
   clearTimeout(deadline)
   helper?.close()

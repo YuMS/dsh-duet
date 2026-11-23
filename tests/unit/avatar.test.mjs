@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {EventEmitter,once} from 'node:events'
 import {createServer} from 'node:http'
 import {WebSocket} from 'ws'
+import {existsSync} from 'node:fs'
 import {AVATAR_DEFAULTS,AVATAR_SIZES,avatarScale,avatarPreferences,saveAvatarPreferences,expressionFor,avatarFrame,avatarInputEffect,captionCue,captionAt,AudioCaptionTimeline} from '../../src/shared/avatar.mjs'
 
 test('desktop input effects are bounded and contain no session data',()=>{
@@ -166,16 +167,18 @@ test('missing WebView2 reports a recoverable dependency error',async()=>{
     return child
   }}),/desktop_webview2_missing/)
 })
-test('native helper uses private IPC and is killed on dispose',async()=>{
+test('native helper uses private IPC and shuts down gracefully on dispose',async()=>{
   let peer,child,env,commands=[]
   const helper=await launchAvatar({size:'medium',onCommand:m=>commands.push(m),onExit(){}},{binary:process.execPath,env:{DISPLAY:':test',PRIVATE_TOKEN:'not inherited'},spawnImpl:(path,args,opts)=>{
     assert.equal(path,process.execPath);assert.deepEqual(args,[]);env=opts.env
     assert.equal(env.PRIVATE_TOKEN,undefined)
     assert.equal(env.DUET_AVATAR_SIZE,'medium')
     assert.equal(env.DUET_AVATAR_OWNER_KIND,'browser')
+    assert.equal(opts.windowsHide,false)
     child=new EventEmitter();child.exitCode=null;child.kill=()=>{child.exitCode=0;peer?.close();child.emit('exit',0)}
     peer=new WebSocket(env.DUET_AVATAR_IPC,[`duet-avatar-${env.DUET_AVATAR_TOKEN}`])
     peer.on('open',()=>peer.send(JSON.stringify({type:'ready',protocol:2})))
+    peer.on('message',raw=>{if(JSON.parse(raw).type==='shutdown'){child.exitCode=0;peer.close();child.emit('exit',0)}})
     return child
   }})
   try{
@@ -190,7 +193,7 @@ test('native helper uses private IPC and is killed on dispose',async()=>{
     assert.deepEqual(commands.at(-1),{type:'surface_action',id:'s1',revision:2,action:'a3',checked:false})
     const received=once(peer,'message');helper.send({type:'frame',mode:'off',rms:0})
     assert.equal(JSON.parse((await received)[0]).type,'frame')
-  }finally{helper.close()}
+  }finally{const exited=once(child,'exit');helper.close();await exited}
   assert.equal(child.exitCode,0)
 })
 test('native ownership cannot be hijacked by a second DSH page; auth and cleanup',async()=>{
@@ -230,4 +233,43 @@ test('closing a page during native startup cancels its unfinished process',async
     return child
   }}),/desktop_cancelled/)
   assert.equal(killed,true)
+})
+
+test('Windows helpers use separate ephemeral WebView2 directories and clean up after exit',async()=>{
+  const paths=[],running=[]
+  try{
+    for(let i=0;i<2;i++){
+      let child
+      const helper=await launchAvatar({onCommand(){},onExit(){}},{platform:'win32',binary:process.execPath,env:{DISPLAY:':fixture',DUET_AVATAR_USER_DATA:'must-not-use'},spawnImpl:(_path,_args,{env,windowsHide})=>{
+        assert.equal(windowsHide,false)
+        paths.push(env.DUET_AVATAR_USER_DATA);assert.ok(existsSync(paths.at(-1)))
+        child=new EventEmitter();child.exitCode=null
+        const ws=new WebSocket(env.DUET_AVATAR_IPC,[`duet-avatar-${env.DUET_AVATAR_TOKEN}`])
+        child.kill=()=>{child.exitCode=0;ws.close();child.emit('exit',0)}
+        ws.on('open',()=>ws.send(JSON.stringify({type:'ready',protocol:2,window_visible:true,fullscreen_suppressed:false})))
+        ws.on('message',raw=>{if(JSON.parse(raw).type==='shutdown')child.kill()})
+        return child
+      }})
+      assert.deepEqual(helper.visibility,{visible:true,fullscreenSuppressed:false})
+      running.push({helper,child})
+    }
+    assert.notEqual(paths[0],paths[1])
+  }finally{
+    await Promise.all(running.map(async({helper,child})=>{const done=once(child,'exit');helper.close();await done}))
+  }
+  for(let i=0;i<100&&paths.some(existsSync);i++)await new Promise(r=>setTimeout(r,20))
+  assert.equal(paths.some(existsSync),false)
+})
+
+test('an unresponsive renderer is forced down after the graceful shutdown deadline',async()=>{
+  let child,kills=0
+  const helper=await launchAvatar({onCommand(){},onExit(){}},{binary:process.execPath,env:{DISPLAY:':fixture'},spawnImpl:(_path,_args,{env})=>{
+    child=new EventEmitter();child.exitCode=null
+    const ws=new WebSocket(env.DUET_AVATAR_IPC,[`duet-avatar-${env.DUET_AVATAR_TOKEN}`])
+    ws.on('error',()=>{})
+    child.kill=signal=>{assert.equal(signal,'SIGKILL');kills++;child.exitCode=1;ws.terminate();child.emit('exit',1)}
+    ws.on('open',()=>ws.send(JSON.stringify({type:'ready',protocol:2})))
+    return child
+  }})
+  const done=once(child,'exit');helper.close();assert.equal(kills,0);await done;assert.equal(kills,1)
 })

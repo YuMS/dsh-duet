@@ -49,12 +49,25 @@ pub fn refresh(window: &tauri::WebviewWindow, state: &State, request: bool) -> R
         if request { guard.request(); }
         guard.observe(observation, now);
         let target = guard.desired();
+        #[cfg(not(target_os = "windows"))]
         if target == guard.visible { return Ok(()); }
         target
     };
+    // Native visibility is authoritative. A successful command (or a cached
+    // intent) does not prove that Windows actually showed the HWND.
+    #[cfg(target_os = "windows")]
+    if platform::visible(window)? == target {
+        state.lock().map_err(|_| "Visibility unavailable")?.visible = target;
+        return Ok(());
+    }
     // Called on the UI thread. Do not keep the state lock across native window calls.
-    if target { platform::show(window)?; } else { window.hide().map_err(|e| e.to_string())?; }
-    state.lock().map_err(|_| "Visibility unavailable")?.visible = target;
+    if target { platform::show(window)?; } else { platform::hide(window)?; }
+    #[cfg(target_os = "windows")]
+    let visible = platform::visible(window)?;
+    #[cfg(not(target_os = "windows"))]
+    let visible = target;
+    state.lock().map_err(|_| "Visibility unavailable")?.visible = visible;
+    if target && !visible { return Err("Avatar window did not become visible".into()); }
     Ok(())
 }
 
@@ -78,6 +91,9 @@ mod platform {
         unsafe { duet_show_without_activation(window.ns_window().map_err(|e| e.to_string())?); }
         Ok(())
     }
+    pub fn hide(window: &tauri::WebviewWindow) -> Result<(), String> {
+        window.hide().map_err(|e|e.to_string())
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -99,6 +115,7 @@ mod platform {
         fn GetClientRect(window: Handle, rect: *mut Rect) -> i32;
         fn ClientToScreen(window: Handle, point: *mut Point) -> i32;
         fn ShowWindow(window: Handle, command: i32) -> i32;
+        fn SetWindowPos(window: Handle, after: Handle, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
     }
     #[link(name = "dwmapi")]
     extern "system" {
@@ -136,7 +153,19 @@ mod platform {
         }
     }
     pub fn show(window: &tauri::WebviewWindow) -> Result<(), String> {
-        unsafe { ShowWindow(window.hwnd().map_err(|e| e.to_string())?.0 as Handle, 4); }
+        // SWP_SHOWWINDOW is not overridden by STARTUPINFO's SW_HIDE. Preserve
+        // position/size and never take focus. Match hide() at the same OS layer.
+        let hwnd = window.hwnd().map_err(|e|e.to_string())?.0 as Handle;
+        if unsafe { SetWindowPos(hwnd, -1isize as Handle, 0, 0, 0, 0, 0x0001|0x0002|0x0010|0x0040) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(())
+    }
+    pub fn visible(window: &tauri::WebviewWindow) -> Result<bool, String> {
+        Ok(unsafe { IsWindowVisible(window.hwnd().map_err(|e|e.to_string())?.0 as Handle) } != 0)
+    }
+    pub fn hide(window: &tauri::WebviewWindow) -> Result<(), String> {
+        unsafe { ShowWindow(window.hwnd().map_err(|e|e.to_string())?.0 as Handle, 0); }
         Ok(())
     }
 }
@@ -145,6 +174,7 @@ mod platform {
 mod platform {
     pub fn detect(_: &tauri::WebviewWindow) -> Option<bool> { Some(false) }
     pub fn show(window: &tauri::WebviewWindow) -> Result<(), String> { window.show().map_err(|e| e.to_string()) }
+    pub fn hide(window: &tauri::WebviewWindow) -> Result<(), String> { window.hide().map_err(|e| e.to_string()) }
 }
 
 #[cfg(test)]
