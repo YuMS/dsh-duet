@@ -1,5 +1,5 @@
 import { WORK_MODES, AGENT_PERMISSION_TEXT, AGENT_WORKSPACE_NOTICE, workModeIssue, TASK_STATES, taskModelLabel } from '../shared/work-mode.mjs'
-import { identityFetch } from './identity.mjs?v=0.3.3'
+import { identityFetch } from './identity.mjs?v=0.3.4'
 
 const styles = `
 .dt-work{--ink:light-dark(#20392d,#e3eee7);--muted:light-dark(#53695c,#a7b9ae);--edge:light-dark(#cbd7cf,#3b4a40);--surface:light-dark(#fff,#191f1d);--tint:light-dark(#eef7f0,#203329);--accent:light-dark(#236548,#b3e9cb);color:var(--ink);font:normal 14px/1.5 system-ui,sans-serif;text-align:start;display:grid;gap:16px;container-type:inline-size}
@@ -8,7 +8,6 @@ const styles = `
 .dt-work .choices,.dt-work .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .dt-work button.choice{display:grid;align-content:start;gap:5px;padding:14px;text-align:start;border:1px solid var(--edge);border-radius:12px;cursor:pointer;color:var(--ink);font-weight:400}
 .dt-work button.choice[aria-pressed=true]{border-color:var(--accent);background:var(--tint)}
-.dt-work .choice .grant{color:var(--accent);font-size:12px}
 .dt-work .choice strong{font-size:15px}.dt-work .choice small,.dt-work .subtle{color:var(--muted);font-size:13px}
 .dt-work .badge{margin-inline-start:6px;font-size:11px;font-weight:600;background:var(--tint);color:var(--accent);border:1px solid var(--edge);border-radius:20px;padding:1px 6px;vertical-align:middle;white-space:nowrap}
 .dt-work .agent-options,.dt-work .model-fields{display:grid;gap:14px}
@@ -62,7 +61,8 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
   if(!container.isConnected)return ()=>{}
   let dedicatedId=options.dedicated_workspace_id||null
   let legacyTitle=options.workspaces.some(w=>w.id===dedicatedId&&w.name==='duet')
-  dedicated=!!dedicatedId&&config.agent_options?.workspace_id===dedicatedId
+  const prefersDedicated=opts=>!opts?.workspace_id||!!dedicatedId&&opts.workspace_id===dedicatedId
+  dedicated=prefersDedicated(config.agent_options)
   const root=document.createElement('div')
   root.className='dt-work'
   const style=document.createElement('style');style.textContent=styles;root.append(style)
@@ -72,7 +72,6 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
   }
   const choices=document.createElement('div');choices.className='choices';choices.setAttribute('role','group');choices.setAttribute('aria-label','工作方式');root.append(choices)
   const cards={}
-  const grant=document.createElement('span');grant.className='grant';grant.textContent=onboarding?'确定后，即同意使用完整权限':'同意完整权限并启用'
   for(const value of ['agent','direct']) {
     const item=WORK_MODES[value]
     const label=document.createElement('button');label.type='button';label.className='choice';label.dataset.workMode=value
@@ -83,13 +82,13 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
     if(value==='agent'){
       const warning=document.createElement('small'),emphasis=document.createElement('b')
       const [before,after]=AGENT_WORKSPACE_NOTICE.split('只能');emphasis.textContent='只能'
-      warning.append(before,emphasis,after);label.append(warning,grant)
+      warning.append(before,emphasis,after);label.append(warning)
     }
     choices.append(label);cards[value]=label
   }
   const agent=document.createElement('div');agent.className='agent-options'
   const permission=document.createElement('small');permission.className='permission';permission.id='dt-permission-'+crypto.randomUUID()
-  permission.textContent='允许执行命令、联网及读写工作区外文件，无需逐项确认。';cards.agent.insertBefore(permission,grant);cards.agent.title=AGENT_PERMISSION_TEXT
+  permission.textContent=AGENT_PERMISSION_TEXT;cards.agent.append(permission);cards.agent.title=AGENT_PERMISSION_TEXT
   cards.agent.setAttribute('aria-describedby',permission.id)
   if(config.work_mode_policy==='direct_only'){cards.agent.remove();choices.style.gridTemplateColumns='1fr'}
   const fields=document.createElement('div');fields.className='fields';agent.append(fields)
@@ -106,7 +105,7 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
   }
   const create=document.createElement('button');create.type='button'
   const dedicatedRow=workspaceRow('div','建议为 dsh-duet 使用单独的工作区',create)
-  const existingRow=workspaceRow('label','选择已有工作区',workspace.input)
+  const existingRow=workspaceRow('label','或者选择已有工作区',workspace.input)
   agent.prepend(dedicatedRow,existingRow)
   const models=(options.models?.groups||[]).flatMap(g=>g.models.map(m=>({...m,provider:g.id,label:`${g.name||g.id} / ${m.name||m.id}`})))
   const key=m=>m?JSON.stringify([m.provider,m.model]):''
@@ -189,7 +188,7 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
     autoRow.hidden=!activeAgent
     if(!activeAgent)executor.effort.label.hidden=true
     workspace.input.options[0].disabled=activeAgent
-    permission.hidden=grant.hidden=activeAgent
+    permission.hidden=activeAgent
     root.querySelectorAll('button,select').forEach(el=>{el.disabled=busy})
     create.textContent=dedicatedId?'使用 dsh-duet 专属工作区':'创建 dsh-duet 专属工作区'
     dedicatedRow.firstElementChild.hidden=!!dedicatedId
@@ -198,7 +197,7 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
       confirm.disabled=busy||!draft||(draft==='agent'&&!dedicated&&!workspace.input.value)
     }
   }
-  const restoreFields=()=>{const opts=config.agent_options;dedicated=!!dedicatedId&&dedicatedId===opts?.workspace_id;workspace.input.value=dedicated?'':opts?.workspace_id||'';executor.restore(opts?.executor_model);manager.restore(opts?.manager_model);autoEnabled=opts?.auto_switch_session!==false;drawAuto()}
+  const restoreFields=()=>{const opts=config.agent_options;dedicated=prefersDedicated(opts);workspace.input.value=dedicated?'':opts?.workspace_id||'';executor.restore(opts?.executor_model);manager.restore(opts?.manager_model);autoEnabled=opts?.auto_switch_session!==false;drawAuto()}
   const persist=async(mode)=>{
     if(busy||disposed)return
     status.textContent=''
@@ -244,6 +243,8 @@ export async function mountWorkMode(container, {saved=()=>{}, cancel=null, initi
     if(onboarding){draft=mode;status.textContent='';draw();return}
     if(mode==='direct'&&currentMode()==='direct'&&!config.agent_permission_version){choosingAgent=false;restoreFields();status.textContent='';draw();return}
     if(mode==='agent'&&currentMode()==='agent'&&!workModeIssue(config))return
+    // Show the default workspace choice before creating it or granting permissions.
+    if(mode==='agent'&&!choosingAgent&&!config.agent_options?.workspace_id){choosingAgent=true;draw();return}
     void persist(mode)
   }
   agent.addEventListener('change',event=>{

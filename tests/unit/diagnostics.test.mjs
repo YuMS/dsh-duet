@@ -1,11 +1,40 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { diagnosticPayload } from '../../src/shared/diagnostics.mjs'
+import { diagnosticPayload, browserOperatingSystem } from '../../src/shared/diagnostics.mjs'
 import { ConnectionDiagnostics, DiagnosticOutbox } from '../../src/host/diagnostics.mjs'
 import { mkdtempSync, readdirSync, statSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DuetState } from '../../src/shared/state.mjs'
+
+test('coarse browser OS detection works without collecting detailed user agent', () => {
+  for (const [nav, expected] of [
+    [{userAgentData:{platform:'Windows'},platform:'Win32'}, 'windows'],
+    [{platform:'MacIntel',maxTouchPoints:0}, 'macos'],
+    [{platform:'MacIntel',maxTouchPoints:5}, 'ios'],
+    [{platform:'iPhone'}, 'ios'],
+    [{platform:'Linux x86_64'}, 'linux'],
+    [{platform:'Linux armv8l',userAgent:'Mozilla/5.0 (Linux; Android 14)'}, 'android'],
+    [{platform:'Linux x86_64',userAgent:'Mozilla/5.0 (X11; CrOS x86_64)'}, 'chromeos'],
+    [{userAgent:'Mozilla/5.0 (Windows NT 10.0)'}, 'windows'],
+    [{}, 'unknown'], [null, 'unknown'],
+  ]) assert.equal(browserOperatingSystem(nav),expected)
+  assert.deepEqual(diagnosticPayload({event:'proxy.failed',client_os:'windows',host_os:'linux',
+    user_agent:'private',os_version:'private'}),{event:'proxy.failed',client_os:'windows',host_os:'linux'})
+  assert.equal(diagnosticPayload({event:'proxy.failed',client_os:'arbitrary text'}).client_os,'unknown')
+})
+
+test('OS metadata survives diagnostic upload and cannot be overridden by browser events', async () => {
+  let body
+  const d=new ConnectionDiagnostics({client_os:'windows',host_os:'linux'},async(_url,opts)=>{
+    body=JSON.parse(opts.body);return {ok:true}
+  })
+  d.add({event:'proxy.failed',code:'test_error',host_os:'macos'})
+  d.offer({protocol:'client_diagnostics_v1',ticket:'test'},{},'wss://example.test/ws')
+  await d.flush(); clearTimeout(d.timer)
+  assert.equal(body.events[0].client_os,'windows')
+  assert.equal(body.events[0].host_os,'linux')
+})
 
 test('diagnostic whitelist removes content, devices, stack and credentials', () => {
   assert.equal(diagnosticPayload({event:'harness.rpc.request',message:'private'}),null)

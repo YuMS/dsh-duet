@@ -1,5 +1,24 @@
 /** Only structural connection diagnostics may leave the user's DSH. */
 export const DIAGNOSTICS_PROTOCOL = 'client_diagnostics_v1'
+const operatingSystems = new Set(['windows', 'macos', 'linux', 'android', 'ios', 'chromeos', 'unknown'])
+export function operatingSystem(value) {
+  return operatingSystems.has(value) ? value : 'unknown'
+}
+/** Coarse platform only: do not upload UA, OS version or device identifiers. */
+export function browserOperatingSystem(nav = globalThis.navigator) {
+  const platform = String(nav?.userAgentData?.platform || nav?.platform || '').slice(0, 128)
+  const ua = String(nav?.userAgent || '').slice(0, 1024)
+  if (/android/i.test(platform + ' ' + ua)) return 'android'
+  if (/iphone|ipad|ipod|ios/i.test(platform + ' ' + ua) || (/mac/i.test(platform) && nav?.maxTouchPoints > 1)) return 'ios'
+  if (/cros|chrome\s?os/i.test(platform + ' ' + ua)) return 'chromeos'
+  if (/win/i.test(platform)) return 'windows'
+  if (/mac/i.test(platform)) return 'macos'
+  if (/linux/i.test(platform)) return 'linux'
+  if (/windows/i.test(ua)) return 'windows'
+  if (/macintosh|mac os x/i.test(ua)) return 'macos'
+  if (/linux/i.test(ua)) return 'linux'
+  return 'unknown'
+}
 const events = new Set([
   'browser.connection_start', 'browser.connection_close', 'browser.pagehide',
   'browser.audio_prepare_started', 'browser.audio_prepare_failed', 'browser.audio_ready',
@@ -14,6 +33,7 @@ const names = new Set(['NotAllowedError', 'NotFoundError', 'NotReadableError', '
 export function diagnosticPayload(value) {
   if (!value || !events.has(value.event)) return null
   const out = { event: value.event }
+  for (const key of ['client_os', 'host_os']) if (value[key] !== undefined) out[key] = operatingSystem(value[key])
   for (const key of ['event_id', 'client_trace_id', 'page_id']) if (typeof value[key] === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value[key])) out[key] = value[key]
   for (const key of ['plugin_version', 'host_version']) if (typeof value[key] === 'string' && /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(value[key]) && value[key].length <= 64) out[key] = value[key]
   for (const key of ['elapsed_ms', 'buffered_bytes', 'bytes', 'context_sample_rate', 'base_latency', 'status']) if (Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 1e12) out[key] = value[key]

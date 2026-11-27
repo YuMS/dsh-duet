@@ -75,6 +75,10 @@ try{
   await p.waitForFunction(()=>!document.querySelector('[data-duet-agent-tasks] [data-task-list] button'))
   assert.equal(await p.locator('[data-duet-agent-tasks]').isVisible(),false)
   await p.evaluate(()=>{snapshot.current='user-session';frame.rows[0].finished_at=null;frame.rows[0].state='running';panel.update(frame,false)})
+  // Leave the earlier hover preview before counting the restored task card.
+  // Its visibility is updated on the next layout frame.
+  await p.mouse.move(700,20)
+  await p.waitForFunction(()=>!document.querySelector('[data-duet-task-detail]'))
   assert.equal(await p.getByRole('button',{name:/修改已有图画.*运行中/}).count(),1)
   await p.evaluate(()=>{frame.rows[0].finished_at=Date.now()-31*60_000;frame.rows[0].state='completed';panel.update(frame,false)})
   assert.equal(await p.locator('[data-duet-agent-tasks] [data-task-list] button').count(),0)

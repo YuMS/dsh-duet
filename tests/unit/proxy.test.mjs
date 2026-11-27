@@ -62,12 +62,35 @@ async function fixture(t, rejectStatus, overrides = {}) {
     wss.close()
     await Promise.all([new Promise(r => host.close(r)), new Promise(r => upstream.close(r))])
   })
-  return { connections, messages, headers, diagnosticUploads, reload(){stop();stop=install();return stop}, connect(mode = 'tts_only', version = '0.1.0', protocols) {
-    return new WebSocket(`ws://127.0.0.1:${host.address().port}/duplex-control/voice/ws?mode=${mode}&plugin_version=${version}`, protocols)
+  return { connections, messages, headers, diagnosticUploads, reload(){stop();stop=install();return stop}, connect(mode = 'tts_only', version = '0.1.0', protocols, environment = {}) {
+    const query=new URLSearchParams({...environment,mode,plugin_version:version})
+    return new WebSocket(`ws://127.0.0.1:${host.address().port}/duplex-control/voice/ws?${query}`, protocols)
   } }
 }
 
 const next = ws => once(ws, 'message').then(([raw]) => JSON.parse(raw))
+
+for(const mode of ['online','tts_only'])test(mode+' reports separate browser and host OS in the upstream handshake',async t=>{
+  const f=await fixture(t)
+  const ws=f.connect(mode,'0.3.3',undefined,{client_os:'windows',host_os:'spoofed'})
+  await once(ws,'open')
+  const ready=next(ws);ws.send(JSON.stringify({type:'session.update'}));await ready
+  assert.equal(f.messages[0].client.client_os,'windows')
+  assert.equal(f.messages[0].client.host_os,({win32:'windows',darwin:'macos',linux:'linux',android:'android'})[process.platform] || 'unknown')
+  ws.close();await once(ws,'close')
+})
+
+test('agent initialization failure closes at handshake before forwarding a voice session or task',async t=>{
+  const f=await fixture(t,null,{workMode:()=> 'agent',agentService:()=>({open:async()=>{
+    throw Error('tools.restrict() names unknown global tool "bash"')
+  }})})
+  const ws=f.connect('online');await once(ws,'open')
+  const reply=next(ws), closed=once(ws,'close')
+  ws.send(JSON.stringify({type:'session.update',workspace_id:'workspace-a'}))
+  assert.match((await reply).error.code,/unknown global tool "bash"/)
+  assert.equal((await closed)[0],1008)
+  assert.equal(f.messages.length,0)
+})
 
 test('agent handshake uses the native workspace source for requests',async t=>{
   const received=[]
@@ -383,7 +406,8 @@ test('tts_only freezes wire mode, buffers state without inference, forwards only
   assert.match(connection_route.selected_endpoint,/^ws:\/\/127\.0\.0\.1:/)
   assert.deepEqual(client, { name: 'dsh-duet', version: '0.1.0', protocol_major: 1,
     metadata_version:'duet_session_v1',mode:'tts_only',diagnostics_protocol:'client_diagnostics_v1',work_mode:'direct',work_protocol:'harness_direct_v1',
-    host_version: PLUGIN_VERSION, page_binding: 'connection_owner_v1', client_trace_id: client.client_trace_id, page_id: '' })
+    host_version: PLUGIN_VERSION, page_binding: 'connection_owner_v1', client_trace_id: client.client_trace_id, page_id: '',
+    client_os:'unknown',host_os:({win32:'windows',darwin:'macos',linux:'linux',android:'android'})[process.platform] || 'unknown' })
   assert.match(client.client_trace_id,/^[a-f0-9-]{36}$/)
   ws.send(JSON.stringify({ type: 'harness.state', state: { focused_session_id: 's1' } }))
   const done = next(ws)

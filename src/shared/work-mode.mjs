@@ -69,7 +69,7 @@ export const TASK_STATES={queued:'排队中',pending:'准备中',running:'运行
   failed:'失败',blocked:'受阻',dropped:'已终止',stopped:'已停止',closed:'已关闭'}
 export const WORK_MODES = {
   direct: {name:'输入模式（传统）',description:'帮你把需求输入文本框'},
-  agent: {name:'代理模式',description:'直接帮你执行任务'},
+  agent: {name:'代理模式',description:'直接帮你执行任务（使用dsh-superagent）'},
 }
 export const AGENT_WORKSPACE_NOTICE = '代理模式只能在全新工作区和会话中使用；如果需要在历史会话中使用，请使用输入模式。'
 const reminderKey='dsh.duet.agent-entry-reminders.v1'
@@ -87,7 +87,7 @@ export function agentEntryReminder(connectionId,storage){
   if(reminderConnections.size>100)reminderConnections.delete(reminderConnections.keys().next().value)
   return show
 }
-export const AGENT_PERMISSION_TEXT = '启用代理模式后，dsh-duet 会以完整权限（danger-full-access）执行命令、读写文件和访问网络，无需逐项确认。任务从所选工作区开始，但访问不限于该目录；其他 DSH 会话的权限不变。'
+export const AGENT_PERMISSION_TEXT = '代理模式将会话开启完整权限模式，即执行命令、读写工作区外文件等无需逐项确认'
 export const validAgentWorkspaceId = id => typeof id === 'string' && id.length > 0 && id.length <= 512
 export function roleModel(value) {
   if (value == null) return null

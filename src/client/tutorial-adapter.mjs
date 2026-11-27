@@ -1,9 +1,9 @@
 /** DSH browser services plus existing voice connection; never opens a microphone. */
-import { PLUGIN_VERSION } from '../shared/state.mjs?v=0.3.3'
-import { focusedSession } from './composer.mjs?v=0.3.3'
-import { sessionCreationPayload, workspaceIssue } from './workspaces.mjs?v=0.3.3'
-import { startComposerBridge } from './composer-bridge.mjs?v=0.3.3'
-import { identityFetch } from './identity.mjs?v=0.3.3'
+import { PLUGIN_VERSION } from '../shared/state.mjs?v=0.3.4'
+import { focusedSession } from './composer.mjs?v=0.3.4'
+import { sessionCreationPayload, workspaceIssue } from './workspaces.mjs?v=0.3.4'
+import { startComposerBridge } from './composer-bridge.mjs?v=0.3.4'
+import { identityFetch } from './identity.mjs?v=0.3.4'
 export function tutorialAdapter(ctx, state, audio, pollReady, startBridge = startComposerBridge) {
   let narration
   const completed = new Map()

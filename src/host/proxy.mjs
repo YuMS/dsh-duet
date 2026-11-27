@@ -128,7 +128,8 @@ export function registerDuetProxy(ctx, config = duetConfig(), feedback = null, c
           ...(agentMode?{agent_trace_protocol:'duet_trace_v1'}:{}),
           work_protocol:agentMode?'duet_agent_v1':'harness_direct_v1'}
         diagnostics = new ConnectionDiagnostics({client_trace_id:clientMetadata.client_trace_id,
-          page_id:clientMetadata.page_id, plugin_version:clientMetadata.version, host_version:PLUGIN_VERSION, mode},
+          page_id:clientMetadata.page_id, plugin_version:clientMetadata.version, host_version:PLUGIN_VERSION,
+          client_os:clientMetadata.client_os, host_os:clientMetadata.host_os, mode},
           diagnosticOutbox.fetcher, diagnosticOutbox)
         const reporter = {diagnostics, page_id:clientMetadata.page_id, user:anonymousUserId}
         reporters.set(clientMetadata.client_trace_id, reporter)

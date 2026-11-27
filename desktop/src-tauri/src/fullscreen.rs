@@ -44,22 +44,19 @@ pub fn refresh(window: &tauri::WebviewWindow, state: &State, request: bool) -> R
     static START: OnceLock<Instant> = OnceLock::new();
     let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64;
     let observation = platform::detect(window);
-    let target = {
+    let (target, applied) = {
         let mut guard = state.lock().map_err(|_| "Visibility unavailable")?;
         if request { guard.request(); }
         guard.observe(observation, now);
-        let target = guard.desired();
-        #[cfg(not(target_os = "windows"))]
-        if target == guard.visible { return Ok(()); }
-        target
+        (guard.desired(), guard.visible)
     };
-    // Native visibility is authoritative. A successful command (or a cached
-    // intent) does not prove that Windows actually showed the HWND.
+    // Check both the last applied intent and the HWND. Native visibility alone
+    // cannot prove that Tao's cached window flags were synchronized.
     #[cfg(target_os = "windows")]
-    if platform::visible(window)? == target {
-        state.lock().map_err(|_| "Visibility unavailable")?.visible = target;
-        return Ok(());
-    }
+    let native_matches = platform::visible(window)? == target;
+    #[cfg(not(target_os = "windows"))]
+    let native_matches = true;
+    if target == applied && native_matches { return Ok(()); }
     // Called on the UI thread. Do not keep the state lock across native window calls.
     if target { platform::show(window)?; } else { platform::hide(window)?; }
     #[cfg(target_os = "windows")]
@@ -153,8 +150,12 @@ mod platform {
         }
     }
     pub fn show(window: &tauri::WebviewWindow) -> Result<(), String> {
+        // Synchronize Tao's VISIBLE flag before touching the HWND. Otherwise a
+        // later set_ignore_cursor_events() reapplies the cached hidden style
+        // when the pointer crosses the avatar, hiding it until the next probe.
+        window.show().map_err(|e|e.to_string())?;
         // SWP_SHOWWINDOW is not overridden by STARTUPINFO's SW_HIDE. Preserve
-        // position/size and never take focus. Match hide() at the same OS layer.
+        // position/size and never take focus. Keep this native startup fallback.
         let hwnd = window.hwnd().map_err(|e|e.to_string())?.0 as Handle;
         if unsafe { SetWindowPos(hwnd, -1isize as Handle, 0, 0, 0, 0, 0x0001|0x0002|0x0010|0x0040) } == 0 {
             return Err(std::io::Error::last_os_error().to_string());
@@ -165,6 +166,8 @@ mod platform {
         Ok(unsafe { IsWindowVisible(window.hwnd().map_err(|e|e.to_string())?.0 as Handle) } != 0)
     }
     pub fn hide(window: &tauri::WebviewWindow) -> Result<(), String> {
+        // Keep Tao's cached flags in sync on fullscreen suppression as well.
+        window.hide().map_err(|e|e.to_string())?;
         unsafe { ShowWindow(window.hwnd().map_err(|e|e.to_string())?.0 as Handle, 0); }
         Ok(())
     }
